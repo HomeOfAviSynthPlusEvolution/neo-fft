@@ -1,0 +1,7 @@
+# External code keeps its upstream formatting.
+third_party/**
+# Generated files and local build trees.
+build/**
+build-*/**
+cmake-build-*/**
+out/**

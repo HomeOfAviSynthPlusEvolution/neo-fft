@@ -1,0 +1,41 @@
+# Project style: clang-format 22.1.7.
+# Keep the familiar AviSynth layout while making new code consistent.
+BasedOnStyle: LLVM
+IndentWidth: 2
+ContinuationIndentWidth: 4
+UseTab: Never
+ColumnLimit: 120
+BreakBeforeBraces: Attach
+NamespaceIndentation: None
+IndentExternBlock: NoIndent
+IndentCaseLabels: true
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+SpaceAfterTemplateKeyword: true
+BreakTemplateDeclarations: Yes
+
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AllowShortLambdasOnASingleLine: Inline
+MaxEmptyLinesToKeep: 1
+
+# Preserve intentional include order for platform and third-party headers.
+SortIncludes:
+  Enabled: false
+IncludeBlocks: Preserve
+SortUsingDeclarations: Never
+
+# Preserve inherited license text, technical comments and qualifier placement.
+ReflowComments: Never
+QualifierAlignment: Leave
+InsertBraces: false
+FixNamespaceComments: true
+LineEnding: LF
+InsertNewlineAtEOF: true
+
+# Use local clang-format off/on comments for intentionally arranged coefficient
+# tables or formulas when their layout conveys structure.
