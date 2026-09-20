@@ -34,11 +34,11 @@ inline float finite(float v) {
     throw std::runtime_error("non-finite sample or intermediate");
   return v;
 }
-template <class T> std::size_t plane_extent(std::int64_t w, std::int64_t h, std::ptrdiff_t stride) {
+template <class T>
+std::size_t plane_extent(std::int64_t w, std::int64_t h, std::ptrdiff_t stride) {
   dimension(w);
   dimension(h);
-  require(stride > 0 && stride % sizeof(T) == 0 && stride / sizeof(T) <= INT32_MAX,
-          "invalid plane byte stride");
+  require(stride > 0 && stride % sizeof(T) == 0 && stride / sizeof(T) <= INT32_MAX, "invalid plane byte stride");
   const auto row = mul_size(static_cast<std::size_t>(w), sizeof(T));
   require(static_cast<std::size_t>(stride) >= row, "stride shorter than active row");
   const auto extent = add_size(mul_size(static_cast<std::size_t>(h - 1), static_cast<std::size_t>(stride)), row);
@@ -46,8 +46,7 @@ template <class T> std::size_t plane_extent(std::int64_t w, std::int64_t h, std:
   return extent;
 }
 template <class T>
-span2d::Plane<T> checked_plane(T* data, std::int64_t w, std::int64_t h, std::ptrdiff_t stride,
-                              std::size_t accessible) {
+span2d::Plane<T> checked_plane(T* data, std::int64_t w, std::int64_t h, std::ptrdiff_t stride, std::size_t accessible) {
   const auto extent = plane_extent<T>(w, h, stride);
   require(data && reinterpret_cast<std::uintptr_t>(data) % alignof(T) == 0, "invalid plane pointer alignment");
   require(extent <= accessible, "plane exceeds owner extent");
@@ -56,17 +55,19 @@ span2d::Plane<T> checked_plane(T* data, std::int64_t w, std::int64_t h, std::ptr
 }
 template <class T>
 span2d::Plane<T> checked_subplane(span2d::Plane<T> p, int x, int y, int w, int h) {
-  require(x >= 0 && y >= 0 && w > 0 && h > 0 && std::int64_t(x) + w <= p.width() &&
-              std::int64_t(y) + h <= p.height(), "subplane outside active extent");
+  require(x >= 0 && y >= 0 && w > 0 && h > 0 && std::int64_t(x) + w <= p.width() && std::int64_t(y) + h <= p.height(),
+          "subplane outside active extent");
   return p.subplane(x, y, w, h);
 }
-template <class T> std::vector<T> buffer(std::size_t count) {
+template <class T>
+std::vector<T> buffer(std::size_t count) {
   const auto bytes = mul_size(count, sizeof(T));
   require(bytes <= static_cast<std::size_t>(PTRDIFF_MAX) && count <= std::vector<T>().max_size(),
           "allocation extent unrepresentable");
   return std::vector<T>(count); // Constructs live T objects, including complex storage.
 }
-template <class T> void disjoint(const T* a, std::size_t an, const void* b, std::size_t bn) {
+template <class T>
+void disjoint(const T* a, std::size_t an, const void* b, std::size_t bn) {
   const auto ap = reinterpret_cast<std::uintptr_t>(a), bp = reinterpret_cast<std::uintptr_t>(b);
   require(an <= UINTPTR_MAX - ap && bn <= UINTPTR_MAX - bp, "address extent overflow");
   require(ap + an <= bp || bp + bn <= ap, "partially overlapping or aliased buffers");

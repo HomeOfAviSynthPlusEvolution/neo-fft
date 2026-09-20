@@ -10,7 +10,8 @@ inline std::vector<std::complex<double>> direct_dft(const float* p, int h, int w
       for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
           const double angle = -2 * pi * (double(ky) * y / h + double(kx) * x / w);
-          out[ky * (w / 2 + 1) + kx] += double(p[y * stride + x]) * std::complex<double>(std::cos(angle), std::sin(angle));
+          out[ky * (w / 2 + 1) + kx] +=
+              double(p[y * stride + x]) * std::complex<double>(std::cos(angle), std::sin(angle));
         }
   return out;
 }

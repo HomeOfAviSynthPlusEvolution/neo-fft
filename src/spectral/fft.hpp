@@ -19,6 +19,7 @@ public:
   void inverse(const std::complex<float>* in, BatchLayout spectrum, float* out, BatchLayout real) const;
   void forward(const float* in, std::complex<float>* out) const;
   void inverse(const std::complex<float>* in, float* out) const;
+
 private:
   int height_, width_;
 };

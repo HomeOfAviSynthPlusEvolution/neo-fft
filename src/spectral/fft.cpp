@@ -4,7 +4,8 @@
 
 namespace neo_fft {
 namespace {
-template <class T> std::size_t validate(T* data, BatchLayout l, int h, int w) {
+template <class T>
+std::size_t validate(T* data, BatchLayout l, int h, int w) {
   require(l.active <= l.capacity, "FFT active count exceeds capacity");
   if (!l.active)
     return 0;
@@ -20,7 +21,8 @@ template <class T> std::size_t validate(T* data, BatchLayout l, int h, int w) {
   require(total <= UINTPTR_MAX - reinterpret_cast<std::uintptr_t>(data), "FFT address extent overflow");
   return add_size(mul_size(l.active - 1, distance), slice);
 }
-template <class T> void scan(const T* p, BatchLayout l, int h, int w) {
+template <class T>
+void scan(const T* p, BatchLayout l, int h, int w) {
   for (std::size_t b = 0; b < l.active; ++b)
     for (int y = 0; y < h; ++y)
       for (int x = 0; x < w; ++x) {
@@ -34,22 +36,26 @@ template <class T> void scan(const T* p, BatchLayout l, int h, int w) {
       }
 }
 void hermitian(const std::complex<float>* p, BatchLayout l, int h, int w) {
-  for (std::size_t b = 0; b < l.active; ++b)
+  for (std::size_t b = 0; b < l.active; ++b) {
+    double scale = 1;
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x <= w / 2; ++x)
+        scale = std::max(scale, std::abs(std::complex<double>(p[b * l.distance + y * l.row_stride + x])));
     for (int x : {0, w % 2 == 0 ? w / 2 : 0})
       for (int y = 0; y < h; ++y) {
         const auto a = p[b * l.distance + y * l.row_stride + x];
         const auto c = std::conj(p[b * l.distance + ((h - y) % h) * l.row_stride + x]);
         // FFT roundoff on boundary columns is allowed; arbitrary spectra are not.
-        const double scale = std::max({1.0, std::abs(std::complex<double>(a)), std::abs(std::complex<double>(c))});
         require(std::abs(std::complex<double>(a) - std::complex<double>(c)) <= 64 * 1.1920928955078125e-7 * scale,
                 "inverse FFT requires Hermitian-compatible boundary columns");
       }
+  }
 }
 } // namespace
 RealFFT::RealFFT(int height, int width) : height_(dimension(height)), width_(dimension(width)) {
   plane_extent<float>(width_, height_, static_cast<std::ptrdiff_t>(mul_size(width_, sizeof(float))));
   plane_extent<std::complex<float>>(columns(), height_,
-      static_cast<std::ptrdiff_t>(mul_size(columns(), sizeof(std::complex<float>))));
+                                    static_cast<std::ptrdiff_t>(mul_size(columns(), sizeof(std::complex<float>))));
 }
 void RealFFT::forward(const float* in, BatchLayout r, std::complex<float>* out, BatchLayout s) const {
   require(r.active == s.active, "FFT batch counts differ");
@@ -78,7 +84,7 @@ void RealFFT::inverse(const std::complex<float>* in, BatchLayout s, float* out, 
   const pocketfft::stride_t ss{std::ptrdiff_t(s.row_stride * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
   for (std::size_t b = 0; b < r.active; ++b)
     pocketfft::c2r(shape, ss, rs, axes, false, in + b * s.distance, out + b * r.distance,
-                  1.0f / (float(width_) * float(height_)), 1);
+                   1.0f / (float(width_) * float(height_)), 1);
   scan(out, r, height_, width_);
 }
 void RealFFT::forward(const float* in, std::complex<float>* out) const {

@@ -1,0 +1,302 @@
+{
+  "version": 1,
+  "status": "frozen-before-holdout",
+  "calibration_seed": 1,
+  "holdout_seeds": [
+    17,
+    101
+  ],
+  "scope": "Windows x64 GCC 16.2 PocketFFT 5f27d5a; phase-1 fixture v1",
+  "calibration_summary_sha256": "41bcb169bfd7b88d1a2655e1509faec28fb1c8d7b7f4654d0620004acabf77ae",
+  "review": "Reviewed per-plane extrema, independent DFT and threshold tests. FFT3D normalized synthesis and window operation order explain sub-micro float deltas; DFTTest non-power-of-two IFFT scaling gives up to two float ULPs at magnitude 10. Integer +/-1 arises at quantization boundaries. No scale, border, window or branch discrepancy observed.",
+  "limits": {
+    "FFT3D/8/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/8/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/8/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/8/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "FFT3D/10/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/10/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/10/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/10/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "FFT3D/12/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/12/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/12/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/12/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "FFT3D/14/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/14/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/14/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/14/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "FFT3D/16/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/16/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/16/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "FFT3D/16/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "FFT3D/32/pocketfft/A": {
+      "atol": 1e-06,
+      "rtol": 0,
+      "calibration_max": 3.5762786865234375e-07,
+      "units": "float sample"
+    },
+    "FFT3D/32/pocketfft/B": {
+      "atol": 1e-06,
+      "rtol": 0,
+      "calibration_max": 3.5762786865234375e-07,
+      "units": "float sample"
+    },
+    "FFT3D/32/pocketfft/C": {
+      "atol": 1e-06,
+      "rtol": 0,
+      "calibration_max": 3.5762786865234375e-07,
+      "units": "float sample"
+    },
+    "FFT3D/32/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "float sample"
+    },
+    "DFTTest/8/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/8/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/8/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/8/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/10/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/10/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/10/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "DFTTest/10/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/12/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/12/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/12/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "DFTTest/12/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/14/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/14/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/14/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "DFTTest/14/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/16/pocketfft/A": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "DFTTest/16/pocketfft/B": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "DFTTest/16/pocketfft/C": {
+      "atol": 1,
+      "rtol": 0,
+      "calibration_max": 1.0,
+      "units": "integer LSB"
+    },
+    "DFTTest/16/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "integer LSB"
+    },
+    "DFTTest/32/pocketfft/A": {
+      "atol": 4e-06,
+      "rtol": 0,
+      "calibration_max": 1.9073486328125e-06,
+      "units": "float sample"
+    },
+    "DFTTest/32/pocketfft/B": {
+      "atol": 4e-06,
+      "rtol": 0,
+      "calibration_max": 1.9073486328125e-06,
+      "units": "float sample"
+    },
+    "DFTTest/32/pocketfft/C": {
+      "atol": 4e-06,
+      "rtol": 0,
+      "calibration_max": 1.9073486328125e-06,
+      "units": "float sample"
+    },
+    "DFTTest/32/pocketfft/D": {
+      "atol": 0,
+      "rtol": 0,
+      "calibration_max": 0,
+      "units": "float sample"
+    }
+  }
+}
