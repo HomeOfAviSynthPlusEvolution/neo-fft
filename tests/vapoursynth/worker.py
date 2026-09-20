@@ -32,7 +32,12 @@ def run(args):
         identifier=plugin.identifier,namespace=plugin.namespace,registration=registration,function=name,
         python=platform.python_version(),vs=str(vs.__version__),os=platform.platform(),seed=args.seed,opt=args.opt,
         fft_backend='pocketfft',fft_threads=1,worker_threads=1,autoload=False,cases=[])
-    if args.new: manifest['kernel_info'] = core.neo_fft.KernelInfo()
+    if args.new:
+        manifest['kernel_info'] = core.neo_fft.KernelInfo()
+        target = manifest['kernel_info']['target']
+        manifest['effective_own_kernel'] = 'scalar' if args.opt==1 else target
+        if args.opt==0 and target in ('scalar','SCALAR','EMU128','scalar (Highway disabled)'):
+            raise RuntimeError('required Highway comparison has no active SIMD target')
     cases = json.loads(args.cases.read_text())
     for case in cases:
         if case['algorithm'] != args.algorithm: continue

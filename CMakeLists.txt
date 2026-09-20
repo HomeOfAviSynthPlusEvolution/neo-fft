@@ -61,6 +61,8 @@ if(NEO_FFT_BUILD_VAPOURSYNTH)
       add_test(NAME vs.admission COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/admission.py" --plugin "$<TARGET_FILE:neo_fft>")
       set_tests_properties(vs.admission PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but")
+      add_test(NAME harness.protocol COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential/test_protocol.py")
     endif()
   endif()
 endif()

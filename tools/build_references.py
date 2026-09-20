@@ -40,6 +40,7 @@ def main():
         src=root/(name+'-src');build=root/(name+'-build')
         if not src.exists(): run(['git','clone','https://github.com/HomeOfAviSynthPlusEvolution/'+repo+'.git',src])
         run(['git','-C',src,'checkout','--detach',commit])
+        if git('-C',src,'diff','--name-only','HEAD').strip(): raise RuntimeError('reference source contains tracked modifications')
         flags=f'-I"{args.vs_include.resolve().as_posix()}" -I"{args.avs_include.resolve().as_posix()}"'
         if name=='fft3d': flags+=f' -I"{(root/"compat").as_posix()}" -DDS_USE_STD_MDSPAN=1 -include windows.h -DNOMINMAX'
         run(['cmake','-S',src,'-B',build,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release',

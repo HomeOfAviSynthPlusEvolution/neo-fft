@@ -23,19 +23,32 @@ def metrics(a,b,mask):
 
 def compare(root,catalog,budgets):
     rows=[]; failed=[]; maxima={}; exceptions=[]
+    records={}
+    for algorithm in ('FFT3D','DFTTest'):
+        for label in ('old1','new1','old0','new0'):
+            manifest=json.loads((root/algorithm/label/'manifest.json').read_text())
+            if label=='new0' and manifest['kernel_info']['target'] in ('scalar','SCALAR','EMU128','scalar (Highway disabled)'):
+                raise RuntimeError('required SIMD capture used a scalar target')
+            records[algorithm,label]={r['case']['id']:r for r in manifest['cases']}
     for case in catalog:
         a=case['algorithm']; cid=case['id']; bits=case['bits']
         edge=max(case['params'].get('bw',32),case['params'].get('bh',32)) if a=='FFT3D' else case['params'].get('sbsize',16)
         for label,left,right in (('A','old1','new1'),('B','old1','new0'),('C','old0','new0'),('D','new1','new0')):
+            lr=records[a,left].get(cid); rr=records[a,right].get(cid)
+            if not lr or not rr or lr['status'] not in ('ok','interface_exception') or rr['status']!='ok':
+                failed.append(dict(case=cid,pair=label,error='capture failed or manifest entry missing'))
+                continue
+            if lr['input_sha256']!=rr['input_sha256'] or lr['case']!=rr['case']:
+                raise RuntimeError('capture inputs or case parameters differ')
             if a=='DFTTest' and case['params'].get('planes')==[] and label!='D':
-                manifest=json.loads((root/a/left/'manifest.json').read_text())
-                record=next(r for r in manifest['cases'] if r['case']['id']==cid)
+                record=lr
                 if record['status']!='interface_exception': raise RuntimeError('unverified reference interface exception')
                 exceptions.append(dict(case=cid,pair=label,reason=record['interface_exception']))
                 continue
             lp,rp=root/a/left/(cid+'.npz'),root/a/right/(cid+'.npz')
             if not lp.exists() or not rp.exists(): failed.append(dict(case=cid,pair=label,error='missing output')); continue
             with np.load(lp) as lhs,np.load(rp) as rhs:
+                if set(lhs.files)!=set(rhs.files): raise RuntimeError('captured frame/plane sets differ')
                 for plane in lhs.files:
                     av,bv=lhs[plane],rhs[plane]
                     if av.shape!=bv.shape or av.dtype!=bv.dtype: raise RuntimeError('inconsistent captured format')
@@ -83,7 +96,9 @@ def main():
                 dest=args.output/a/label;dest.mkdir(parents=True,exist_ok=True)
                 (dest/'process.log').write_text(result.stdout+result.stderr)
                 print(result.stdout,flush=True)
-                if result.returncode: print(result.stderr,flush=True)
+                if result.returncode:
+                    print(result.stderr,flush=True)
+                    raise RuntimeError(f'capture {a}/{label} failed; see {dest / "process.log"}')
     return compare(args.output,catalog,budget)
 
 if __name__=='__main__': raise SystemExit(main())
