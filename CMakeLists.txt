@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.24)
+project(neo_fft VERSION 0.1.0 LANGUAGES CXX)
+
+option(NEO_FFT_BUILD_VAPOURSYNTH "Build the VS plugin" ON)
+option(NEO_FFT_ENABLE_HIGHWAY "Build Highway spectral kernels" OFF)
+include(cmake/Dependencies.cmake)
+add_library(neo_fft_core STATIC src/spectral/fft.cpp)
+target_compile_features(neo_fft_core PUBLIC cxx_std_17)
+target_include_directories(neo_fft_core PUBLIC src)
+target_include_directories(neo_fft_core SYSTEM PUBLIC "${dualsynth2_SOURCE_DIR}/include")
+target_include_directories(neo_fft_core SYSTEM PRIVATE "${pocketfft_SOURCE_DIR}")
+# Fixed baseline ISA, synchronous execution, no process-wide FFT plan cache.
+target_compile_definitions(neo_fft_core PRIVATE POCKETFFT_NO_MULTITHREADING POCKETFFT_CACHE_SIZE=0)
+if(MSVC)
+  target_compile_options(neo_fft_core PUBLIC /fp:strict PRIVATE /W4)
+else()
+  target_compile_options(neo_fft_core PUBLIC -fno-fast-math -ffp-contract=off PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+set_target_properties(neo_fft_core PROPERTIES POSITION_INDEPENDENT_CODE ON
+  CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(neo_fft_foundation_tests tests/unit/foundation.cpp)
+  target_link_libraries(neo_fft_foundation_tests PRIVATE neo_fft_core)
+  add_test(NAME core.foundation COMMAND neo_fft_foundation_tests)
+endif()
