@@ -48,6 +48,7 @@ def source(vs, case, seed):
             elif pattern == 3: v = (xx / max(pw-1, 1) + yy / max(ph-1, 1)) / 2
             elif pattern == 4: v = ((xx + yy) % 2).astype(float)
             elif pattern == 5: v = .5 + .2*np.sin(2*np.pi*xx/9) + .2*np.cos(2*np.pi*yy/7)
+            elif pattern == 7: v = np.take(np.array([-.25, 0, .5, 1, 1.25]), (xx+yy) % 5)
             else: v = (noise.reshape(ph, pw) >> 8).astype(np.float64) / (1 << 24)
             if bits == 32:
                 if family in ('444', '422', '420') and p: v = v - .5
@@ -113,4 +114,29 @@ def cases():
             add('DFTTest','values',dict(ftype=ftype,sigma=sigma,zmean=False,sbsize=8,sosize=4))
     for mode in (0,1):
         add('DFTTest','kaiser-zero',dict(sbsize=9 if mode==0 else 8,smode=mode,sosize=4,swin=4,twin=4,sbeta=0,tbeta=0))
+    return out
+
+def supplemental_cases():
+    """Explicit spec coverage additions; retain v1 calibration inputs unchanged."""
+    out = []
+    def add(a, group, params, **kw):
+        out.append(dict(id=f'{a}-supplement-{group}-{len(out):04}', algorithm=a,
+                        format=kw.pop('format', 'gray'), bits=kw.pop('bits', 32), params=params, **kw))
+    for a in ('FFT3D', 'DFTTest'):
+        for family in ('422', '420'):
+            for bits in (16, 32):
+                add(a, 'nondivisible', {}, format=family, bits=bits, width=260, height=196, frames=7)
+        add(a, 'signed-extremes', {}, pattern=7)
+    for mode in (0, 1):
+        for beta in (.5, 1., 2.):
+            add('DFTTest', 'exact-beta', dict(sbsize=3 if mode==0 else 8, smode=mode, sosize=4,
+                                           f0beta=beta, zmean=False))
+    add('DFTTest', 'zero-dc-no-mean', dict(sbsize=4, sosize=0, swin=6, zmean=False))
+    for ftype in (3, 4):
+        for pmin, pmax in ((0., 1.), (2., 10.)):
+            add('DFTTest', 'bands', dict(sbsize=8, sosize=4, ftype=ftype, sigma=.25,
+                                       sigma2=1.5, pmin=pmin, pmax=pmax, zmean=False))
+    # First safe reflection sizes for B=8/O=0, and B=1 overlap-add.
+    add('FFT3D', 'first-reflection', dict(bw=8, bh=8, ow=0, oh=0), width=13, height=13)
+    add('DFTTest', 'first-reflection', dict(sbsize=1, sosize=0), width=2, height=2)
     return out

@@ -80,7 +80,8 @@ def run(args):
                     arrays[f'{n}-{p}'] = values
                     hashes.append(hashlib.sha256(values.tobytes()).hexdigest())
             if args.new:
-                order = list(reversed(range(dst.num_frames))) + [0, dst.num_frames-1, 0]
+                order = sorted(range(dst.num_frames), key=lambda n: (n*5+3)%dst.num_frames)
+                order += list(reversed(range(dst.num_frames))) + [0, dst.num_frames-1, 0]
                 # A fresh instance has no cached outputs, so distinct frames execute concurrently.
                 second = call(src,**params)
                 pending = [(n,second.get_frame_async(n)) for n in order]

@@ -35,6 +35,7 @@ def main():
     c.neo_fft.DFTTest(small,tbsize=1,smode=0,sbsize=1).get_frame(0)
     fails(lambda:c.neo_fft.DFTTest(small,tbsize=1,smode=1,sbsize=1,sosize=0),'reflection')
     fails(lambda:c.neo_fft.FFT3D(c.std.BlankClip(width=8,height=8,format=vs.GRAY8),bt=1,bw=8,bh=8,ow=0,oh=0),'reflection')
+    fails(lambda:c.neo_fft.FFT3D(c.std.BlankClip(width=12,height=12,format=vs.GRAY8),bt=1,bw=8,bh=8,ow=0,oh=0),'reflection')
     fails(lambda:c.neo_fft.DFTTest(src,tbsize=1,sbsize=4,sosize=0,swin=6,zmean=True),'DC')
     c.neo_fft.DFTTest(src,tbsize=1,sbsize=4,sosize=0,swin=6,zmean=False).get_frame(0)
     floatclip=c.std.BlankClip(width=128,height=96,format=vs.YUV444PS)
@@ -61,6 +62,11 @@ def main():
             for p in (1,2): assert np.asarray(good[p]).tobytes()==np.asarray(original[p]).tobytes()
             # Failure in one instance must not poison a subsequent valid request.
             call(src,**kwargs).get_frame(0)
+            for value in (float('inf'), -float('inf')):
+                def infinite(n, f):
+                    out=f.copy(); np.asarray(out[0])[:]=value; return out
+                infclip=c.std.ModifyFrame(floatclip,clips=floatclip,selector=infinite)
+                fails(lambda:call(infclip,planes=[0],**kwargs).get_frame(0),'non-finite')
     info=c.neo_fft.KernelInfo()
     print('VS admission, negative inputs, selected NaN errors, bitwise copies, properties passed:',info)
 

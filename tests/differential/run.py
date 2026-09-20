@@ -9,7 +9,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests/vapoursynth'))
-from fixtures import cases
+from fixtures import cases, supplemental_cases
 
 def metrics(a,b,mask):
     yy,xx=np.nonzero(mask)
@@ -80,10 +80,12 @@ def main():
     p.add_argument('--fft3d-reference',type=Path,required=True);p.add_argument('--dfttest-reference',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True);p.add_argument('--seed',type=int,required=True)
     p.add_argument('--budgets',type=Path);p.add_argument('--compare-only',action='store_true')
+    p.add_argument('--supplemental',action='store_true',help='Run explicit spec coverage additions with unchanged frozen limits')
     args=p.parse_args()
     if args.seed!=1 and not args.budgets: p.error('holdout requires a frozen budget file')
     budget=json.loads(args.budgets.read_text()) if args.budgets else None
-    catalog=cases();args.output.mkdir(parents=True,exist_ok=True)
+    catalog=supplemental_cases() if args.supplemental else cases()
+    args.output.mkdir(parents=True,exist_ok=True)
     casefile=args.output/'cases.json'
     if not args.compare_only:
         casefile.write_text(json.dumps(catalog,indent=2))
