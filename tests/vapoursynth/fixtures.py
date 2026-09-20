@@ -49,6 +49,10 @@ def source(vs, case, seed):
             elif pattern == 4: v = ((xx + yy) % 2).astype(float)
             elif pattern == 5: v = .5 + .2*np.sin(2*np.pi*xx/9) + .2*np.cos(2*np.pi*yy/7)
             elif pattern == 7: v = np.take(np.array([-.25, 0, .5, 1, 1.25]), (xx+yy) % 5)
+            elif pattern == 8: v = xx / max(pw-1, 1)
+            elif pattern == 9: v = yy / max(ph-1, 1)
+            elif pattern == 10: v = .5 + .2*np.sin(2*np.pi*xx/9)
+            elif pattern == 11: v = .5 + .2*np.cos(2*np.pi*yy/7)
             else: v = (noise.reshape(ph, pw) >> 8).astype(np.float64) / (1 << 24)
             if bits == 32:
                 if family in ('444', '422', '420') and p: v = v - .5
@@ -127,6 +131,7 @@ def supplemental_cases():
             for bits in (16, 32):
                 add(a, 'nondivisible', {}, format=family, bits=bits, width=260, height=196, frames=7)
         add(a, 'signed-extremes', {}, pattern=7)
+        for pattern in (8, 9, 10, 11): add(a, 'directional', {}, pattern=pattern)
     for mode in (0, 1):
         for beta in (.5, 1., 2.):
             add('DFTTest', 'exact-beta', dict(sbsize=3 if mode==0 else 8, smode=mode, sosize=4,
