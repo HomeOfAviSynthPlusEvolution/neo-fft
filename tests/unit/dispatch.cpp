@@ -68,6 +68,14 @@ int main() {
     for (int i = 0; i < 33; ++i)
       huge.data[i] = {1e30f, 0};
     rejects([&] { optimized(huge.data, nullptr, 33, 0, {}); });
+
+    Guarded overflow_test(33);
+    for (int i = 0; i < 33; ++i)
+      overflow_test.data[i] = {2.0f, 0};
+    SpectralParams overflow_params;
+    overflow_params.type = 2;
+    overflow_params.a = 3e38f;
+    rejects([&] { optimized(overflow_test.data, nullptr, 33, 0, overflow_params); });
     std::cout << "spectral target: " << spectral_target(0) << "; scalar comparison and protected-page tails passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

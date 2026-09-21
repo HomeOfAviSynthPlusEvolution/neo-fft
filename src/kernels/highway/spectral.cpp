@@ -68,6 +68,7 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Mul(gain, re);
       im = hn::Mul(gain, im);
+      non_finite = hn::Or(non_finite, hn::Not(hn::And(hn::IsFinite(re), hn::IsFinite(im))));
       hn::StoreInterleaved2(re, im, d, output + 2 * k);
     }
   } else {
@@ -86,6 +87,7 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Add(hn::Mul(gain, re), mr);
       im = hn::Add(hn::Mul(gain, im), mi);
+      non_finite = hn::Or(non_finite, hn::Not(hn::And(hn::IsFinite(re), hn::IsFinite(im))));
       hn::StoreInterleaved2(re, im, d, output + 2 * k);
     }
   }
