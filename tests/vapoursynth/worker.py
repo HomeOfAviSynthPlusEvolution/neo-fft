@@ -8,14 +8,42 @@ import numpy as np
 import vapoursynth as vs
 from fixtures import environment, source
 
+def loaded_fft_libraries():
+    """Record the actual FFTW dependency selected by the Windows loader."""
+    if platform.system() != 'Windows': return []
+    import ctypes
+    from ctypes import wintypes
+    api=ctypes.WinDLL('kernel32',use_last_error=True)
+    enum=api.K32EnumProcessModules
+    enum.argtypes=[wintypes.HANDLE,ctypes.POINTER(wintypes.HMODULE),wintypes.DWORD,ctypes.POINTER(wintypes.DWORD)]
+    enum.restype=wintypes.BOOL
+    filename=api.GetModuleFileNameW
+    filename.argtypes=[wintypes.HMODULE,wintypes.LPWSTR,wintypes.DWORD]
+    filename.restype=wintypes.DWORD
+    modules=(wintypes.HMODULE*2048)(); needed=wintypes.DWORD()
+    if not enum(wintypes.HANDLE(-1),modules,ctypes.sizeof(modules),ctypes.byref(needed)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if needed.value>ctypes.sizeof(modules): raise RuntimeError('module list overflow')
+    result=[]
+    for module in modules[:needed.value//ctypes.sizeof(wintypes.HMODULE)]:
+        name=ctypes.create_unicode_buffer(32768)
+        if not filename(module,name,len(name)): raise ctypes.WinError(ctypes.get_last_error())
+        path=Path(name.value)
+        if 'fftw' in path.name.lower():
+            result.append(dict(path=str(path),sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+    return result
+
 def run(args):
-    policy = environment(vs)
+    policy = environment(vs, autoload=args.public_release)
     core = vs.core
     core.num_threads = 4
-    before = {p.identifier for p in core.plugins()}
-    core.std.LoadPlugin(path=str(args.plugin.resolve()))
-    loaded = [p for p in core.plugins() if p.identifier not in before]
-    if len(loaded) != 1: raise RuntimeError('exactly one explicitly loaded plugin required')
+    if args.public_release:
+        loaded = [p for p in core.plugins() if p.plugin_path and Path(p.plugin_path).resolve()==args.plugin.resolve()]
+    else:
+        before = {p.identifier for p in core.plugins()}
+        core.std.LoadPlugin(path=str(args.plugin.resolve()))
+        loaded = [p for p in core.plugins() if p.identifier not in before]
+    if len(loaded) != 1: raise RuntimeError('exactly one plugin at the requested DLL path is required')
     plugin = loaded[0]
     if Path(plugin.plugin_path).resolve() != args.plugin.resolve(): raise RuntimeError('loaded DLL path differs')
     functions = list(plugin.functions())
@@ -31,7 +59,9 @@ def run(args):
     manifest = dict(plugin=str(args.plugin.resolve()),sha256=hashlib.sha256(args.plugin.read_bytes()).hexdigest(),
         identifier=plugin.identifier,namespace=plugin.namespace,registration=registration,function=name,
         python=platform.python_version(),vs=str(vs.__version__),os=platform.platform(),seed=args.seed,opt=args.opt,
-        fft_backend='pocketfft',fft_threads=1,worker_threads=1,autoload=False,cases=[])
+        fft_backend='fftw' if args.public_release else 'pocketfft',fft_threads=1,worker_threads=1,
+        autoload=args.public_release,
+        reference_kind='candidate' if args.new else 'public-release' if args.public_release else 'pinned-source',cases=[])
     if args.new:
         manifest['kernel_info'] = core.neo_fft.KernelInfo()
         target = manifest['kernel_info']['target']
@@ -47,6 +77,9 @@ def run(args):
             record['input_sha256'] = digest
             params = dict(case['params'],fft_backend='pocketfft',opt=args.opt)
             params.update(dict(bt=1,ncpu=1,mt=False) if args.algorithm=='FFT3D' else dict(tbsize=1,threads=1,fft_threads=1))
+            if args.public_release:
+                del params['fft_backend']
+                if args.algorithm=='FFT3D': params['measure']=False
             if not args.new and params.get('planes') == []:
                 try:
                     call(src,**params)
@@ -94,6 +127,9 @@ def run(args):
         except Exception:
             record.update(status='error',error=traceback.format_exc())
         manifest['cases'].append(record)
+    manifest['loaded_fft_libraries']=loaded_fft_libraries()
+    if args.public_release and not manifest['loaded_fft_libraries']:
+        raise RuntimeError('public release FFTW dependency was not observed')
     (args.output/'manifest.json').write_text(json.dumps(manifest,indent=2))
     failed = [r for r in manifest['cases'] if r['status'] not in ('ok','interface_exception')]
     print(json.dumps(dict(output=str(args.output),cases=len(manifest['cases']),failed=len(failed))))
@@ -106,4 +142,5 @@ if __name__=='__main__':
     p.add_argument('--output',type=Path,required=True); p.add_argument('--algorithm',choices=('FFT3D','DFTTest'),required=True)
     p.add_argument('--seed',type=int,required=True); p.add_argument('--opt',type=int,required=True)
     p.add_argument('--new',action='store_true')
+    p.add_argument('--public-release',action='store_true',help='Use exact DLL from normal VS autoload, with its legacy FFTW interface')
     raise SystemExit(run(p.parse_args()))

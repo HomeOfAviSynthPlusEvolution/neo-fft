@@ -3,11 +3,11 @@ import hashlib
 import threading
 import numpy as np
 
-def environment(vs):
+def environment(vs, autoload=False):
     class Policy(vs.EnvironmentPolicy):
         def on_policy_registered(self, api):
             self.api = api
-            self.env = api.create_environment(int(vs.CoreCreationFlags.DISABLE_AUTO_LOADING))
+            self.env = api.create_environment(0 if autoload else int(vs.CoreCreationFlags.DISABLE_AUTO_LOADING))
             self.local = threading.local()
         def get_current_environment(self):
             return getattr(self.local, 'env', self.env)

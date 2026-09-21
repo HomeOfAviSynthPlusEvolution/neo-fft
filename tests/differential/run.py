@@ -4,12 +4,34 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests/vapoursynth'))
 from fixtures import cases, supplemental_cases
+
+def reuse_candidate(source,dest,plugin,seed,opt,catalog):
+    manifest_path=source/'manifest.json'
+    manifest=json.loads(manifest_path.read_text())
+    if manifest['sha256']!=hashlib.sha256(plugin.read_bytes()).hexdigest() or manifest['seed']!=seed or manifest['opt']!=opt:
+        raise RuntimeError('reused candidate binary, seed or dispatch differs')
+    if [r['case'] for r in manifest['cases']]!=catalog:
+        raise RuntimeError('reused candidate case catalog differs')
+    for record in manifest['cases']:
+        if record['status']!='ok': raise RuntimeError('reused candidate has a failed capture')
+        file=source/(record['case']['id']+'.npz')
+        with np.load(file) as values:
+            hashes=[hashlib.sha256(values[k].tobytes()).hexdigest() for k in values.files]
+        if hashes!=record['output_hashes']: raise RuntimeError('reused candidate output hash differs')
+    dest.mkdir(parents=True,exist_ok=True)
+    for record in manifest['cases']:
+        name=record['case']['id']+'.npz'
+        shutil.copy2(source/name,dest/name)
+    manifest['reused_from']=str(source.resolve())
+    manifest['original_manifest_sha256']=hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    (dest/'manifest.json').write_text(json.dumps(manifest,indent=2))
 
 def metrics(a,b,mask):
     yy,xx=np.nonzero(mask)
@@ -21,12 +43,15 @@ def metrics(a,b,mask):
         mae=float(error.mean()),rmse=float(np.sqrt(np.mean(error*error))),
         location=[int(yy[idx]),int(xx[idx])],reference=float(av[idx]),candidate=float(bv[idx]))
 
-def compare(root,catalog,budgets):
+def compare(root,catalog,budgets,backend_pair='pocketfft'):
     rows=[]; failed=[]; maxima={}; exceptions=[]
     records={}
     for algorithm in ('FFT3D','DFTTest'):
         for label in ('old1','new1','old0','new0'):
             manifest=json.loads((root/algorithm/label/'manifest.json').read_text())
+            if backend_pair=='fftw-pocketfft' and label.startswith('old'):
+                if not manifest.get('autoload') or manifest.get('fft_backend')!='fftw' or not manifest.get('loaded_fft_libraries'):
+                    raise RuntimeError('public-release reference lacks autoload/FFTW provenance')
             if label=='new0' and manifest['kernel_info']['target'] in ('scalar','SCALAR','EMU128','scalar (Highway disabled)'):
                 raise RuntimeError('required SIMD capture used a scalar target')
             records[algorithm,label]={r['case']['id']:r for r in manifest['cases']}
@@ -56,7 +81,7 @@ def compare(root,catalog,budgets):
                     ey=(yy<edge)|(yy>=h-edge); ex=(xx<edge)|(xx>=w-edge)
                     regions={'full':np.ones((h,w),bool),'edge':ey|ex,'interior':~(ey|ex),'corner':ey&ex}
                     result={name:metrics(av,bv,mask) for name,mask in regions.items()}
-                    key=f'{a}/{bits}/pocketfft/{label}'
+                    key=f'{a}/{bits}/{backend_pair}/{label}'
                     maxima[key]=max(maxima.get(key,0),result['full']['max'])
                     row=dict(case=cid,plane=plane,pair=label,budget_key=key,regions=result)
                     if budgets is not None:
@@ -81,6 +106,8 @@ def main():
     p.add_argument('--output',type=Path,required=True);p.add_argument('--seed',type=int,required=True)
     p.add_argument('--budgets',type=Path);p.add_argument('--compare-only',action='store_true')
     p.add_argument('--supplemental',action='store_true',help='Run explicit spec coverage additions with unchanged frozen limits')
+    p.add_argument('--public-releases',action='store_true',help='Compare autoloaded original release FFTW DLLs with new PocketFFT')
+    p.add_argument('--reuse-candidate-captures',type=Path,help='Reuse candidate outputs only after binary/seed/dispatch/catalog/output-hash checks')
     args=p.parse_args()
     if args.seed!=1 and not args.budgets: p.error('holdout requires a frozen budget file')
     budget=json.loads(args.budgets.read_text()) if args.budgets else None
@@ -91,9 +118,15 @@ def main():
         casefile.write_text(json.dumps(catalog,indent=2))
         for a,ref in [('FFT3D',args.fft3d_reference),('DFTTest',args.dfttest_reference)]:
             for label,opt,plugin,new in [('old1',1,ref,False),('new1',1,args.plugin,True),('old0',0,ref,False),('new0',0,args.plugin,True)]:
+                if new and args.reuse_candidate_captures:
+                    reuse_candidate(args.reuse_candidate_captures/a/label,args.output/a/label,plugin,args.seed,opt,
+                                    [c for c in catalog if c['algorithm']==a])
+                    print(f'{a}/{label}: reused verified candidate capture',flush=True)
+                    continue
                 cmd=[sys.executable,str(ROOT/'tests/vapoursynth/worker.py'),'--plugin',str(plugin),'--algorithm',a,
                      '--cases',str(casefile),'--output',str(args.output/a/label),'--seed',str(args.seed),'--opt',str(opt)]
                 if new: cmd.append('--new')
+                elif args.public_releases: cmd.append('--public-release')
                 result=subprocess.run(cmd,text=True,capture_output=True)
                 dest=args.output/a/label;dest.mkdir(parents=True,exist_ok=True)
                 (dest/'process.log').write_text(result.stdout+result.stderr)
@@ -101,6 +134,6 @@ def main():
                 if result.returncode:
                     print(result.stderr,flush=True)
                     raise RuntimeError(f'capture {a}/{label} failed; see {dest / "process.log"}')
-    return compare(args.output,catalog,budget)
+    return compare(args.output,catalog,budget,'fftw-pocketfft' if args.public_releases else 'pocketfft')
 
 if __name__=='__main__': raise SystemExit(main())
