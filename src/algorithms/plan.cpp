@@ -1,4 +1,5 @@
 #include "algorithms/plan.hpp"
+#include <cstring>
 #include <type_traits>
 
 namespace neo_fft {
@@ -49,7 +50,8 @@ void validate(const DFTConfig& c) {
 Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), fft(c.bh, c.bw),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
-      kernel_(select_spectral(c.opt)), mean_scale_(c.degrid) {
+      kernel_(select_spectral(c.opt)), mean_scale_(c.degrid),
+      pool_(runtime::make_workspace_budget(geometry, fft, true, 1)) {
   valid_format(f);
   const float factor = f.floating ? 1.0f / 255 : float(1 << (f.bits - 8));
   const float sigma = finite(c.sigma * factor);
@@ -68,7 +70,8 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
 }
 Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), fft(c.block, c.block),
-      kernel_(select_spectral(c.opt)), mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0) {
+      kernel_(select_spectral(c.opt)), mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
+      pool_(runtime::make_workspace_budget(geometry, fft, false, 1)) {
   valid_format(f);
   auto win = dft_window(c.block, c.mode == 0 ? 0 : c.overlap, c.mode, c.swin, c.twin, c.sbeta, c.tbeta);
   h_ = std::move(win.h);
@@ -90,7 +93,7 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
   }
 }
 template <class T>
-void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst) const {
+void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Workspace& ws) const {
   const auto& gx = geometry.x;
   const auto& gy = geometry.y;
   require(src.width() == gx.length && src.height() == gy.length && dst.width() == gx.length &&
@@ -108,11 +111,12 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst) const {
       for (int x = 0; x < src.width(); ++x)
         finite(src.row_ptr(y)[x]);
   }
-  auto accum = buffer<float>(mul_size(gx.cover, gy.cover));
-  // One active block bounds FFT scratch independently of the number of origins.
-  auto block = buffer<float>(fft.samples()), inverse = buffer<float>(fft.samples());
-  auto spectrum = buffer<std::complex<float>>(fft.bins());
-  auto row = algorithm == Algorithm::FFT3D ? buffer<float>(mul_size(gx.cover, gy.block)) : std::vector<float>{};
+  ws.reset();
+  auto accum = ws.accum();
+  auto block = ws.block();
+  auto inverse = ws.inverse();
+  auto spectrum = ws.spectrum();
+  auto row = algorithm == Algorithm::FFT3D ? ws.row() : span2d::Plane<float>{};
   const float base =
       !format.floating && format.chroma && algorithm == Algorithm::FFT3D ? float(1 << (format.bits - 1)) : 0;
   const float input_scale = format.floating ? 255.0f : 1.0f / float(1 << (format.bits - 8));
@@ -120,7 +124,8 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst) const {
   for (int by = 0; by < gy.count; ++by) {
     const int oy = by * gy.step;
     if (!row.empty())
-      std::fill(row.begin(), row.end(), 0.0f);
+      std::memset(row.data(), 0,
+                  static_cast<std::size_t>(row.stride_bytes()) * static_cast<std::size_t>(row.height()));
     for (int bx = 0; bx < gx.count; ++bx) {
       const int ox = bx * gx.step;
       for (int y = 0; y < gy.block; ++y) {
@@ -139,46 +144,61 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst) const {
       if (center_) {
         const int cy = gy.block / 2, cx = gx.block / 2;
         const auto i = std::size_t(cy) * gx.block + cx;
-        accum[std::size_t(oy + cy) * gx.cover + ox + cx] = (inverse[i] * volume) * h_[i];
+        accum(oy + cy, ox + cx) = (inverse[i] * volume) * h_[i];
       } else
         for (int y = 0; y < gy.block; ++y)
           for (int x = 0; x < gx.block; ++x) {
             const auto i = std::size_t(y) * gx.block + x;
             if (algorithm == Algorithm::FFT3D) {
-              auto& v = row[std::size_t(y) * gx.cover + ox + x];
-              v += inverse[i] * wx_.synthesis[x];
+              row(y, ox + x) += inverse[i] * wx_.synthesis[x];
             } else {
-              auto& v = accum[std::size_t(oy + y) * gx.cover + ox + x];
-              v += (inverse[i] * volume) * h_[i];
+              accum(oy + y, ox + x) += (inverse[i] * volume) * h_[i];
             }
           }
     }
     if (!row.empty())
-      for (int y = 0; y < gy.block; ++y)
+      for (int y = 0; y < gy.block; ++y) {
+        const auto r_row = row.row(y);
+        auto a_row = accum.row(oy + y);
         for (int x = 0; x < gx.cover; ++x) {
-          auto& v = accum[std::size_t(oy + y) * gx.cover + x];
-          v += row[std::size_t(y) * gx.cover + x] * wy_.synthesis[y];
+          a_row[x] += r_row[x] * wy_.synthesis[y];
         }
+      }
   }
-  for (int y = 0; y < dst.height(); ++y)
+  for (int y = 0; y < dst.height(); ++y) {
+    const auto a_row = accum.row(y + gy.offset);
+    auto* dst_row = dst.row_ptr(y);
     for (int x = 0; x < dst.width(); ++x) {
-      const float z = accum[std::size_t(y + gy.offset) * gx.cover + x + gx.offset];
+      const float z = a_row[x + gx.offset];
       if constexpr (std::is_same_v<T, float>) {
-        dst.row_ptr(y)[x] = algorithm == Algorithm::FFT3D ? std::clamp(z, 0.0f, 1.0f) : z * (1.0f / 255);
+        dst_row[x] = algorithm == Algorithm::FFT3D ? std::clamp(z, 0.0f, 1.0f) : z * (1.0f / 255);
       } else {
         const float v = algorithm == Algorithm::FFT3D ? (z + 0.5f) + base : (z * float(1 << (format.bits - 8))) + 0.5f;
         const float peak = float((1 << format.bits) - 1);
-        dst.row_ptr(y)[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
+        dst_row[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
       }
     }
+  }
 }
 void Plan::process(span2d::Plane<const std::uint8_t> s, span2d::Plane<std::uint8_t> d) const {
-  run(s, d);
+  auto lease = pool_.acquire();
+  run(s, d, *lease);
 }
 void Plan::process(span2d::Plane<const std::uint16_t> s, span2d::Plane<std::uint16_t> d) const {
-  run(s, d);
+  auto lease = pool_.acquire();
+  run(s, d, *lease);
 }
 void Plan::process(span2d::Plane<const float> s, span2d::Plane<float> d) const {
-  run(s, d);
+  auto lease = pool_.acquire();
+  run(s, d, *lease);
+}
+void Plan::process(span2d::Plane<const std::uint8_t> s, span2d::Plane<std::uint8_t> d, runtime::Workspace& ws) const {
+  run(s, d, ws);
+}
+void Plan::process(span2d::Plane<const std::uint16_t> s, span2d::Plane<std::uint16_t> d, runtime::Workspace& ws) const {
+  run(s, d, ws);
+}
+void Plan::process(span2d::Plane<const float> s, span2d::Plane<float> d, runtime::Workspace& ws) const {
+  run(s, d, ws);
 }
 } // namespace neo_fft

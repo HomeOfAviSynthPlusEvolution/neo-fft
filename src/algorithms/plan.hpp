@@ -1,6 +1,8 @@
 #pragma once
 #include "algorithms/windows.hpp"
 #include "kernels/spectral.hpp"
+#include "runtime/workspace.hpp"
+#include "runtime/workspace_pool.hpp"
 
 namespace neo_fft {
 enum class Algorithm { FFT3D, DFTTest };
@@ -31,6 +33,12 @@ public:
   void process(span2d::Plane<const std::uint16_t> src, span2d::Plane<std::uint16_t> dst) const;
   void process(span2d::Plane<const float> src, span2d::Plane<float> dst) const;
 
+  void process(span2d::Plane<const std::uint8_t> src, span2d::Plane<std::uint8_t> dst, runtime::Workspace& ws) const;
+  void process(span2d::Plane<const std::uint16_t> src, span2d::Plane<std::uint16_t> dst, runtime::Workspace& ws) const;
+  void process(span2d::Plane<const float> src, span2d::Plane<float> dst, runtime::Workspace& ws) const;
+
+  runtime::WorkspacePool& workspace_pool() const noexcept { return pool_; }
+
 private:
   AxisWindow wx_, wy_;
   std::vector<float> h_;
@@ -39,7 +47,8 @@ private:
   SpectralKernel kernel_;
   float mean_scale_ = 0;
   bool center_ = false;
+  mutable runtime::WorkspacePool pool_;
   template <class T>
-  void run(span2d::Plane<const T> src, span2d::Plane<T> dst) const;
+  void run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Workspace& ws) const;
 };
 } // namespace neo_fft
