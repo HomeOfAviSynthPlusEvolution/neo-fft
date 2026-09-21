@@ -13,4 +13,6 @@ void spectral_scalar(std::complex<float>* spectrum, const std::complex<float>* g
                      float grid_scale, const SpectralParams& p);
 SpectralKernel select_spectral(int opt);
 const char* spectral_target(int opt);
+std::size_t optimal_l2_working_set_bytes() noexcept;
+int optimal_simd_lanes() noexcept;
 } // namespace neo_fft

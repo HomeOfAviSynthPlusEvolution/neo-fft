@@ -42,6 +42,7 @@ public:
 private:
   AxisWindow wx_, wy_;
   std::vector<float> h_;
+  std::vector<float> h_synthesis_;
   std::vector<std::complex<float>> grid_;
   SpectralParams params_;
   SpectralKernel kernel_;

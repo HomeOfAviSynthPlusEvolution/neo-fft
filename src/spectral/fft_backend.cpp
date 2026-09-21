@@ -27,7 +27,7 @@
 #define BACKEND_NAME "pocketfft-native"
 #endif
 #define POCKETFFT_NO_MULTITHREADING
-#define POCKETFFT_CACHE_SIZE 0
+#define POCKETFFT_CACHE_SIZE 16
 #include <pocketfft_hdronly.h>
 
 namespace neo_fft::detail {

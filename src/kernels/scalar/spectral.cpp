@@ -54,5 +54,11 @@ const char* spectral_target(int opt) {
   select_spectral(opt);
   return "scalar (Highway disabled)";
 }
+std::size_t optimal_l2_working_set_bytes() noexcept {
+  return 256 * 1024;
+}
+int optimal_simd_lanes() noexcept {
+  return 4;
+}
 #endif
 } // namespace neo_fft

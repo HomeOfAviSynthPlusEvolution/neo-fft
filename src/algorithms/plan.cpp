@@ -1,5 +1,6 @@
 #include "algorithms/plan.hpp"
 #include "algorithms/pad.hpp"
+#include "kernels/spectral.hpp"
 #include <cstring>
 #include <type_traits>
 
@@ -21,12 +22,21 @@ Geometry geometry_dft(int w, int h, const DFTConfig& c) {
   return {dft_axis(w, c.block, c.mode, c.overlap), dft_axis(h, c.block, c.mode, c.overlap)};
 }
 int select_optimal_batch_size(std::size_t block_samples, int gx_count) noexcept {
-  constexpr std::size_t kTargetL2Bytes = 256 * 1024;
+  const std::size_t l2_budget = optimal_l2_working_set_bytes();
+  const int lanes = std::max(4, optimal_simd_lanes());
   const std::size_t bytes_per_block = block_samples * 16;
-  int k = static_cast<int>(kTargetL2Bytes / (bytes_per_block ? bytes_per_block : 1));
-  k = (k / 16) * 16;
-  k = std::clamp(k, 8, 32);
-  return std::max(1, std::min(gx_count, k));
+  int k_max = static_cast<int>(l2_budget / (bytes_per_block ? bytes_per_block : 1));
+  k_max = (k_max / lanes) * lanes;
+  k_max = std::clamp(k_max, lanes, 64);
+
+  int best_k = k_max;
+  for (int cand = k_max; cand >= std::max(lanes, k_max / 2); cand -= lanes) {
+    if (gx_count % cand == 0) {
+      best_k = cand;
+      break;
+    }
+  }
+  return std::max(1, std::min(gx_count, best_k));
 }
 } // namespace
 void validate(const FFT3DConfig& c) {
@@ -86,6 +96,10 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
   valid_format(f);
   auto win = dft_window(c.block, c.mode == 0 ? 0 : c.overlap, c.mode, c.swin, c.twin, c.sbeta, c.tbeta);
   h_ = std::move(win.h);
+  h_synthesis_.resize(h_.size());
+  const float volume = float(fft.width()) * float(fft.height());
+  for (std::size_t i = 0; i < h_.size(); ++i)
+    h_synthesis_[i] = h_[i] * volume;
   const float scale = c.ftype < 2 ? win.wscale : 1.0f;
   params_ = {c.ftype,
              finite(c.sigma / scale),
@@ -128,7 +142,6 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
   auto row = algorithm == Algorithm::FFT3D ? ws.row() : span2d::Plane<float>{};
   const float base =
       !format.floating && format.chroma && algorithm == Algorithm::FFT3D ? float(1 << (format.bits - 1)) : 0;
-  const float volume = float(fft.width()) * float(fft.height());
   const int batch_cap = ws.budget().batch_size;
   BatchLayout r_layout{std::size_t(fft.width()), fft.samples(), std::size_t(batch_cap), 0};
   BatchLayout s_layout{std::size_t(fft.columns()), fft.bins(), std::size_t(batch_cap), 0};
@@ -141,65 +154,129 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
       const int k = std::min(batch_cap, gx.count - bx_start);
       r_layout.active = std::size_t(k);
       s_layout.active = std::size_t(k);
-      for (int b = 0; b < k; ++b) {
-        const int ox = (bx_start + b) * gx.step;
-        float* blk = ws.block(b).data();
-        for (int y = 0; y < gy.block; ++y) {
-          const float* src_row = ws.padded().row_ptr(oy + y) + ox;
-          for (int x = 0; x < gx.block; ++x) {
-            const auto i = std::size_t(y) * gx.block + x;
-            blk[i] = algorithm == Algorithm::FFT3D ? (src_row[x] * wy_.analysis[y]) * wx_.analysis[x]
-                                                   : src_row[x] * h_[i];
+
+      // 1. Gather
+      if (algorithm == Algorithm::FFT3D) {
+        const float* wx_a = wx_.analysis.data();
+        for (int b = 0; b < k; ++b) {
+          const int ox = (bx_start + b) * gx.step;
+          float* blk = ws.block(b).data();
+          for (int y = 0; y < gy.block; ++y) {
+            const float* src_row = ws.padded().row_ptr(oy + y) + ox;
+            float* blk_row = blk + y * gx.block;
+            const float wy = wy_.analysis[y];
+            for (int x = 0; x < gx.block; ++x) {
+              blk_row[x] = (src_row[x] * wy) * wx_a[x];
+            }
+          }
+        }
+      } else {
+        const float* h_data = h_.data();
+        for (int b = 0; b < k; ++b) {
+          const int ox = (bx_start + b) * gx.step;
+          float* blk = ws.block(b).data();
+          for (int y = 0; y < gy.block; ++y) {
+            const float* src_row = ws.padded().row_ptr(oy + y) + ox;
+            float* blk_row = blk + y * gx.block;
+            const float* h_row = h_data + y * gx.block;
+            for (int x = 0; x < gx.block; ++x) {
+              blk_row[x] = src_row[x] * h_row[x];
+            }
           }
         }
       }
+
       fft.forward(ws.block(0).data(), r_layout, ws.spectrum(0).data(), s_layout);
+
       for (int b = 0; b < k; ++b) {
         auto* spec_b = ws.spectrum(b).data();
         const float scale = grid_.empty() ? 0 : (mean_scale_ * spec_b[0].real()) / grid_[0].real();
         kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, params_);
       }
+
       fft.inverse(ws.spectrum(0).data(), s_layout, ws.inverse(0).data(), r_layout);
-      for (int b = 0; b < k; ++b) {
-        const int ox = (bx_start + b) * gx.step;
-        const float* inv_b = ws.inverse(b).data();
-        if (center_) {
-          const int cy = gy.block / 2, cx = gx.block / 2;
-          const auto i = std::size_t(cy) * gx.block + cx;
-          accum(oy + cy, ox + cx) = (inv_b[i] * volume) * h_[i];
-        } else {
-          for (int y = 0; y < gy.block; ++y)
+
+      // 5. Scatter
+      if (center_) {
+        const int cy = gy.block / 2, cx = gx.block / 2;
+        const auto ci = std::size_t(cy) * gx.block + cx;
+        const float h_syn_val = h_synthesis_[ci];
+        float* acc_row = accum.row_ptr(oy + cy);
+        for (int b = 0; b < k; ++b) {
+          const int ox = (bx_start + b) * gx.step;
+          acc_row[ox + cx] = ws.inverse(b).data()[ci] * h_syn_val;
+        }
+      } else if (algorithm == Algorithm::FFT3D) {
+        const float* wx_s = wx_.synthesis.data();
+        for (int b = 0; b < k; ++b) {
+          const int ox = (bx_start + b) * gx.step;
+          const float* inv_b = ws.inverse(b).data();
+          for (int y = 0; y < gy.block; ++y) {
+            float* r_row = row.row_ptr(y) + ox;
+            const float* inv_row = inv_b + y * gx.block;
             for (int x = 0; x < gx.block; ++x) {
-              const auto i = std::size_t(y) * gx.block + x;
-              if (algorithm == Algorithm::FFT3D) {
-                row(y, ox + x) += inv_b[i] * wx_.synthesis[x];
-              } else {
-                accum(oy + y, ox + x) += (inv_b[i] * volume) * h_[i];
-              }
+              r_row[x] += inv_row[x] * wx_s[x];
             }
+          }
+        }
+      } else {
+        const float* h_syn_data = h_synthesis_.data();
+        for (int b = 0; b < k; ++b) {
+          const int ox = (bx_start + b) * gx.step;
+          const float* inv_b = ws.inverse(b).data();
+          for (int y = 0; y < gy.block; ++y) {
+            float* acc_row = accum.row_ptr(oy + y) + ox;
+            const float* inv_row = inv_b + y * gx.block;
+            const float* h_syn_row = h_syn_data + y * gx.block;
+            for (int x = 0; x < gx.block; ++x) {
+              acc_row[x] += inv_row[x] * h_syn_row[x];
+            }
+          }
         }
       }
     }
-    if (!row.empty())
+    if (!row.empty()) {
       for (int y = 0; y < gy.block; ++y) {
-        const auto r_row = row.row(y);
-        auto a_row = accum.row(oy + y);
+        const float* r_ptr = row.row_ptr(y);
+        float* a_ptr = accum.row_ptr(oy + y);
+        const float wy = wy_.synthesis[y];
         for (int x = 0; x < gx.cover; ++x) {
-          a_row[x] += r_row[x] * wy_.synthesis[y];
+          a_ptr[x] += r_ptr[x] * wy;
         }
       }
+    }
   }
-  for (int y = 0; y < dst.height(); ++y) {
-    const auto a_row = accum.row(y + gy.offset);
-    auto* dst_row = dst.row_ptr(y);
-    for (int x = 0; x < dst.width(); ++x) {
-      const float z = a_row[x + gx.offset];
-      if constexpr (std::is_same_v<T, float>) {
-        dst_row[x] = algorithm == Algorithm::FFT3D ? std::clamp(z, 0.0f, 1.0f) : z * (1.0f / 255);
+  if constexpr (std::is_same_v<T, float>) {
+    const float scale = algorithm == Algorithm::FFT3D ? 1.0f : 1.0f / 255.0f;
+    for (int y = 0; y < dst.height(); ++y) {
+      const float* a_ptr = accum.row_ptr(y + gy.offset) + gx.offset;
+      float* dst_row = dst.row_ptr(y);
+      if (algorithm == Algorithm::FFT3D) {
+        for (int x = 0; x < dst.width(); ++x) {
+          dst_row[x] = std::clamp(a_ptr[x], 0.0f, 1.0f);
+        }
       } else {
-        const float v = algorithm == Algorithm::FFT3D ? (z + 0.5f) + base : (z * float(1 << (format.bits - 8))) + 0.5f;
-        const float peak = float((1 << format.bits) - 1);
-        dst_row[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
+        for (int x = 0; x < dst.width(); ++x) {
+          dst_row[x] = a_ptr[x] * scale;
+        }
+      }
+    }
+  } else {
+    const float peak = float((1 << format.bits) - 1);
+    for (int y = 0; y < dst.height(); ++y) {
+      const float* a_ptr = accum.row_ptr(y + gy.offset) + gx.offset;
+      T* dst_row = dst.row_ptr(y);
+      if (algorithm == Algorithm::FFT3D) {
+        for (int x = 0; x < dst.width(); ++x) {
+          const float v = (a_ptr[x] + 0.5f) + base;
+          dst_row[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
+        }
+      } else {
+        const float scale = float(1 << (format.bits - 8));
+        for (int x = 0; x < dst.width(); ++x) {
+          const float v = (a_ptr[x] * scale) + 0.5f;
+          dst_row[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
+        }
       }
     }
   }
