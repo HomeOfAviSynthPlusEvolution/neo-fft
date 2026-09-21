@@ -11,6 +11,9 @@ using SpectralKernel = void (*)(std::complex<float>*, const std::complex<float>*
                                 const SpectralParams&);
 void spectral_scalar(std::complex<float>* spectrum, const std::complex<float>* grid, std::size_t count,
                      float grid_scale, const SpectralParams& p);
+void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           std::complex<float>* out);
 SpectralKernel select_spectral(int opt);
 const char* spectral_target(int opt);
 std::size_t optimal_l2_working_set_bytes() noexcept;

@@ -45,6 +45,88 @@ void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, st
     x[k] = {finite(gain * re + mr), finite(gain * im + mi)};
   }
 }
+
+void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           std::complex<float>* out) {
+  require(T >= 1 && T <= 5, "FFT3D invalid T");
+  require(c >= 0 && c < T, "FFT3D invalid c");
+  if (T == 1) {
+    const float mr_scale = (grid && degrid != 0.0f && grid[0].real() != 0.0f)
+                               ? finite((degrid * spectra[0][0].real()) / grid[0].real())
+                               : 0.0f;
+    for (std::size_t k = 0; k < bins; ++k) {
+      const float mr = grid ? finite(mr_scale * grid[k].real()) : 0.0f;
+      const float mi = grid ? finite(mr_scale * grid[k].imag()) : 0.0f;
+      const float re = finite(spectra[0][k].real() - mr);
+      const float im = finite(spectra[0][k].imag() - mi);
+      const float power = finite(re * re + im * im);
+      const float q = power + 1e-15f;
+      const float gain = std::max((q - noise) / q, lower);
+      out[k] = {finite(gain * re + mr), finite(gain * im + mi)};
+    }
+    return;
+  }
+
+  constexpr double kPi = 3.1415926535897932384626433832795;
+  std::complex<float> fwd_twiddle[5][5];
+  std::complex<float> inv_twiddle[5];
+  for (int m = 0; m < T; ++m) {
+    for (int j = 0; j < T; ++j) {
+      const double angle = -2.0 * kPi * double(j * m) / double(T);
+      fwd_twiddle[m][j] = {float(std::cos(angle)), float(std::sin(angle))};
+    }
+    const double inv_angle = +2.0 * kPi * double(c * m) / double(T);
+    inv_twiddle[m] = {float(std::cos(inv_angle)), float(std::sin(inv_angle))};
+  }
+
+  const float g_ratio = (grid && degrid != 0.0f && grid[0].real() != 0.0f)
+                            ? finite((degrid * spectra[c][0].real()) / grid[0].real())
+                            : 0.0f;
+
+  const float inv_T = 1.0f / float(T);
+
+  for (std::size_t k = 0; k < bins; ++k) {
+    const std::complex<float> M = grid ? (g_ratio * grid[k]) : std::complex<float>(0.0f, 0.0f);
+    const std::complex<float> gridT = M * float(T);
+
+    std::complex<float> F[5]{};
+    for (int m = 0; m < T; ++m) {
+      std::complex<float> sum(0.0f, 0.0f);
+      for (int j = 0; j < T; ++j) {
+        sum += spectra[j][k] * fwd_twiddle[m][j];
+      }
+      F[m] = sum;
+    }
+
+    std::complex<float> R[5];
+    R[0] = F[0] - gridT;
+    for (int m = 1; m < T; ++m) {
+      R[m] = F[m];
+    }
+
+    std::complex<float> R_filtered[5];
+    for (int m = 0; m < T; ++m) {
+      const float power = finite(R[m].real() * R[m].real() + R[m].imag() * R[m].imag());
+      const float q = power + 1e-15f;
+      const float gain = std::max((q - noise) / q, lower);
+      R_filtered[m] = gain * R[m];
+    }
+
+    std::complex<float> F_out[5];
+    F_out[0] = R_filtered[0] + gridT;
+    for (int m = 1; m < T; ++m) {
+      F_out[m] = R_filtered[m];
+    }
+
+    std::complex<float> y(0.0f, 0.0f);
+    for (int m = 0; m < T; ++m) {
+      y += F_out[m] * inv_twiddle[m];
+    }
+    out[k] = y * inv_T;
+  }
+}
+
 #if !NEO_FFT_ENABLE_HIGHWAY
 SpectralKernel select_spectral(int opt) {
   require(opt == 0 || opt == 1, "unsupported opt: expected 0 or 1");

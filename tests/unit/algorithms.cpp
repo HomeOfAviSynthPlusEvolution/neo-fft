@@ -73,6 +73,44 @@ void windows() {
     const double tw_c = 0.2810639 + 0.5208972 + 0.1980399; // 1.000001
     check_near(tw_c, 1.000001, 1e-7);
   }
+
+  // FFT3D temporal filter unit test
+  {
+    for (int T : {2, 3, 4, 5}) {
+      const int c = T / 2;
+      const std::size_t bins = 8;
+      std::vector<std::vector<std::complex<float>>> frames(T, std::vector<std::complex<float>>(bins));
+      for (int j = 0; j < T; ++j) {
+        for (std::size_t k = 0; k < bins; ++k) {
+          frames[j][k] = std::complex<float>(float(j * 11 + int(k) * 7 + 1), float(j * 5 - int(k) * 3));
+        }
+      }
+      std::vector<const std::complex<float>*> ptrs(T);
+      for (int j = 0; j < T; ++j) ptrs[j] = frames[j].data();
+
+      std::vector<std::complex<float>> out(bins);
+      // Test sigma=0 -> exact identity reconstruction of frame c
+      fft3d_temporal_filter(ptrs.data(), T, c, bins, 0.0f, nullptr, 0.0f, 0.0f, out.data());
+      for (std::size_t k = 0; k < bins; ++k) {
+        check_near(out[k].real(), frames[c][k].real(), 1e-5);
+        check_near(out[k].imag(), frames[c][k].imag(), 1e-5);
+      }
+    }
+
+    // Diagnostic example from spec: T=3, G[0]=1, current DC ratio g=2, temporal values [1,2,6]
+    {
+      const int T = 3, c = 1;
+      std::vector<std::complex<float>> f0 = {{1.0f, 0.0f}}, f1 = {{2.0f, 0.0f}}, f2 = {{6.0f, 0.0f}};
+      const std::complex<float>* ptrs[3] = {f0.data(), f1.data(), f2.data()};
+      std::vector<std::complex<float>> grid = {{1.0f, 0.0f}};
+      std::vector<std::complex<float>> out(1);
+      // degrid=1.0, current frame f1 has DC 2.0 -> g = 2.0 / 1.0 = 2.0. gridT = 2.0 * 3 = 6.0.
+      // F0 = 1 + 2 + 6 = 9.0. R0 = 9.0 - 6.0 = 3.0.
+      // If noise = 0, gain = 1, Fout0 = 3.0 + 6.0 = 9.0 -> reconstructs f1[0] = 2.0.
+      fft3d_temporal_filter(ptrs, T, c, 1, 1.0f, grid.data(), 0.0f, 0.0f, out.data());
+      check_near(out[0].real(), 2.0f, 1e-5);
+    }
+  }
 }
 void filters() {
   std::complex<float> x{10, 0};
