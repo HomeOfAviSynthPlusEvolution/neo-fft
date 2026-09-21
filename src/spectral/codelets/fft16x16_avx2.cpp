@@ -272,14 +272,18 @@ inline void batch_r2c_avx2(std::size_t batch, const float* in, std::size_t in_di
 
       fft16_8way_avx2<true>(r, i);
 
-      for (int kx = 0; kx < 9; ++kx) {
-        alignas(32) float tr[8], ti[8];
-        _mm256_store_ps(tr, r[kx]);
-        _mm256_store_ps(ti, i[kx]);
-        for (int y = 0; y < 8; ++y) {
-          inter_r[y_base + y][kx] = tr[y];
-          inter_i[y_base + y][kx] = ti[y];
-        }
+      // In-register transpose r[0..7] and i[0..7]
+      transpose8x8_ps(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+      transpose8x8_ps(i[0], i[1], i[2], i[3], i[4], i[5], i[6], i[7]);
+
+      alignas(32) float tr8[8];
+      _mm256_store_ps(tr8, r[8]);
+
+      for (int y = 0; y < 8; ++y) {
+        _mm256_store_ps(&inter_r[y_base + y][0], r[y]);
+        _mm256_store_ps(&inter_i[y_base + y][0], i[y]);
+        inter_r[y_base + y][8] = tr8[y];
+        inter_i[y_base + y][8] = 0.0f;
       }
     }
 
@@ -288,18 +292,18 @@ inline void batch_r2c_avx2(std::size_t batch, const float* in, std::size_t in_di
     {
       __m256 r[16], i[16];
       for (int y = 0; y < 16; ++y) {
-        r[y] = _mm256_load_ps(inter_r[y]);
-        i[y] = _mm256_load_ps(inter_i[y]);
+        r[y] = _mm256_load_ps(&inter_r[y][0]);
+        i[y] = _mm256_load_ps(&inter_i[y][0]);
       }
       fft16_8way_avx2<true>(r, i);
       for (int ky = 0; ky < 16; ++ky) {
-        alignas(32) float tr[8], ti[8];
-        _mm256_store_ps(tr, r[ky]);
-        _mm256_store_ps(ti, i[ky]);
         cfloat* dst = blk_out + ky * out_stride;
-        for (int kx = 0; kx < 8; ++kx) {
-          dst[kx] = cfloat(tr[kx], ti[kx]);
-        }
+        __m256 xy_lo = _mm256_unpacklo_ps(r[ky], i[ky]);
+        __m256 xy_hi = _mm256_unpackhi_ps(r[ky], i[ky]);
+        __m256 c0_3  = _mm256_permute2f128_ps(xy_lo, xy_hi, 0x20);
+        __m256 c4_7  = _mm256_permute2f128_ps(xy_lo, xy_hi, 0x31);
+        _mm256_storeu_ps(reinterpret_cast<float*>(dst), c0_3);
+        _mm256_storeu_ps(reinterpret_cast<float*>(dst + 4), c4_7);
       }
     }
     // Column 8 (single column)
@@ -338,23 +342,17 @@ inline void batch_c2r_avx2(std::size_t batch, const cfloat* in, std::size_t in_d
       __m256 r[16], i[16];
       for (int y = 0; y < 16; ++y) {
         const cfloat* src = blk_in + y * in_stride;
-        alignas(32) float tr[8], ti[8];
-        for (int kx = 0; kx < 8; ++kx) {
-          tr[kx] = src[kx].real();
-          ti[kx] = src[kx].imag();
-        }
-        r[y] = _mm256_load_ps(tr);
-        i[y] = _mm256_load_ps(ti);
+        __m256 c0_3 = _mm256_loadu_ps(reinterpret_cast<const float*>(src));
+        __m256 c4_7 = _mm256_loadu_ps(reinterpret_cast<const float*>(src + 4));
+        __m256 s_lo = _mm256_shuffle_ps(c0_3, c4_7, _MM_SHUFFLE(2, 0, 2, 0));
+        __m256 s_hi = _mm256_shuffle_ps(c0_3, c4_7, _MM_SHUFFLE(3, 1, 3, 1));
+        r[y] = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(s_lo), _MM_SHUFFLE(3, 1, 2, 0)));
+        i[y] = _mm256_castsi256_ps(_mm256_permute4x64_epi64(_mm256_castps_si256(s_hi), _MM_SHUFFLE(3, 1, 2, 0)));
       }
       fft16_8way_avx2<false>(r, i);
       for (int ky = 0; ky < 16; ++ky) {
-        alignas(32) float tr[8], ti[8];
-        _mm256_store_ps(tr, r[ky]);
-        _mm256_store_ps(ti, i[ky]);
-        for (int kx = 0; kx < 8; ++kx) {
-          inter_r[ky][kx] = tr[kx];
-          inter_i[ky][kx] = ti[kx];
-        }
+        _mm256_store_ps(&inter_r[ky][0], r[ky]);
+        _mm256_store_ps(&inter_i[ky][0], i[ky]);
       }
     }
     {
@@ -377,16 +375,38 @@ inline void batch_c2r_avx2(std::size_t batch, const cfloat* in, std::size_t in_d
     // 2. Horizontal 1D IFFT directly to blk_out
     for (int g = 0; g < 2; ++g) {
       const int y_base = g * 8;
-      __m256 r[16], i[16];
-      for (int kx = 0; kx < 9; ++kx) {
-        alignas(32) float tr[8], ti[8];
-        for (int y = 0; y < 8; ++y) {
-          tr[y] = inter_r[y_base + y][kx];
-          ti[y] = inter_i[y_base + y][kx];
-        }
-        r[kx] = _mm256_load_ps(tr);
-        i[kx] = _mm256_load_ps(ti);
+      __m256 r0 = _mm256_load_ps(&inter_r[y_base + 0][0]);
+      __m256 r1 = _mm256_load_ps(&inter_r[y_base + 1][0]);
+      __m256 r2 = _mm256_load_ps(&inter_r[y_base + 2][0]);
+      __m256 r3 = _mm256_load_ps(&inter_r[y_base + 3][0]);
+      __m256 r4 = _mm256_load_ps(&inter_r[y_base + 4][0]);
+      __m256 r5 = _mm256_load_ps(&inter_r[y_base + 5][0]);
+      __m256 r6 = _mm256_load_ps(&inter_r[y_base + 6][0]);
+      __m256 r7 = _mm256_load_ps(&inter_r[y_base + 7][0]);
+
+      __m256 i0 = _mm256_load_ps(&inter_i[y_base + 0][0]);
+      __m256 i1 = _mm256_load_ps(&inter_i[y_base + 1][0]);
+      __m256 i2 = _mm256_load_ps(&inter_i[y_base + 2][0]);
+      __m256 i3 = _mm256_load_ps(&inter_i[y_base + 3][0]);
+      __m256 i4 = _mm256_load_ps(&inter_i[y_base + 4][0]);
+      __m256 i5 = _mm256_load_ps(&inter_i[y_base + 5][0]);
+      __m256 i6 = _mm256_load_ps(&inter_i[y_base + 6][0]);
+      __m256 i7 = _mm256_load_ps(&inter_i[y_base + 7][0]);
+
+      transpose8x8_ps(r0, r1, r2, r3, r4, r5, r6, r7);
+      transpose8x8_ps(i0, i1, i2, i3, i4, i5, i6, i7);
+
+      alignas(32) float tr8[8], ti8[8];
+      for (int y = 0; y < 8; ++y) {
+        tr8[y] = inter_r[y_base + y][8];
+        ti8[y] = inter_i[y_base + y][8];
       }
+      __m256 r8 = _mm256_load_ps(tr8);
+      __m256 i8 = _mm256_load_ps(ti8);
+
+      __m256 r[16] = {r0, r1, r2, r3, r4, r5, r6, r7, r8};
+      __m256 i[16] = {i0, i1, i2, i3, i4, i5, i6, i7, i8};
+
       const __m256 vzero = _mm256_setzero_ps();
       for (int kx = 1; kx < 8; ++kx) {
         r[16 - kx] = r[kx];
