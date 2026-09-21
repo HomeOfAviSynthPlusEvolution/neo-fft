@@ -31,6 +31,7 @@ Phase 1 targets Windows x64 and fixed-format planar GRAY, YUV and RGB with 1 or 
 | DFT-WIN-001 | [DFTTest windows and reconstruction](dfttest/kernel-window-reconstruction.md) | Analysis, calibration, synthesis, quantization |
 | DFT-FILTER-001 | [DFTTest mean removal and filters](dfttest/kernel-filter.md) | ftype 0..4 |
 | DFT-VS-001 | [DFTTest VS interface](dfttest/plugin.md) | Registration and black-box tests |
+| AMEND-001 | [Validation hoisting and precondition guarantees](amendment-validation-hoisting.md) | Boundary verification, RealFFT, execution pipeline |
 | P1-ACCEPT-001 | [VS differential acceptance](acceptance.md) | Batch closure |
 
 These are specification boundaries, not a requirement to create one C++ file or one development batch per row. Organize specifications by phase and function, using `plugin.md` / `kernel-*.md` to define inputs/outputs, equations, domains, errors and examples. Later phases add their own function specifications and reference existing shared operators rather than duplicate them. Do not create future phase directories before their specifications are written.
