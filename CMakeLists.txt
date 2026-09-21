@@ -82,7 +82,8 @@ foreach(target ${NEO_FFT_FFT_TARGETS})
 endforeach()
 
 add_library(neo_fft_core STATIC src/spectral/fft.cpp src/algorithms/windows.cpp
-  src/algorithms/plan.cpp src/kernels/scalar/spectral.cpp)
+  src/algorithms/plan.cpp src/kernels/scalar/spectral.cpp
+  src/runtime/workspace.cpp src/runtime/workspace_pool.cpp)
 target_sources(neo_fft_core PRIVATE ${NEO_FFT_FFT_OBJECTS})
 target_compile_definitions(neo_fft_core PRIVATE NEO_FFT_ENABLE_HIGHWAY=$<BOOL:${NEO_FFT_ENABLE_HIGHWAY}>)
 target_compile_features(neo_fft_core PUBLIC cxx_std_17)
@@ -156,4 +157,7 @@ if(BUILD_TESTING)
   add_executable(neo_fft_dispatch_tests tests/unit/dispatch.cpp)
   target_link_libraries(neo_fft_dispatch_tests PRIVATE neo_fft_core)
   add_test(NAME core.dispatch COMMAND neo_fft_dispatch_tests)
+  add_executable(neo_fft_workspace_tests tests/unit/workspace.cpp)
+  target_link_libraries(neo_fft_workspace_tests PRIVATE neo_fft_core)
+  add_test(NAME core.workspace COMMAND neo_fft_workspace_tests)
 endif()
