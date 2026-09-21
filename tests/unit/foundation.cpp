@@ -71,7 +71,26 @@ int main() {
     rejects([&] { fft.inverse(s, back); });
     pulse[0] = NAN;
     rejects([&] { fft.forward(pulse, s); });
-    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches passed\n";
+
+    for (auto profile : {FftProfile::scalar, FftProfile::native
+#if NEO_FFT_FFT_X86_TARGETS
+                         ,
+                         FftProfile::sse2, FftProfile::avx2, FftProfile::avx512
+#endif
+         }) {
+      RealFFT fft_prof(2, 4, profile);
+      CHECK(fft_prof.lanes() >= 1);
+      CHECK(fft_profile_name(profile) != nullptr);
+      CHECK(fft_backend_name(profile) != nullptr);
+      float pulse_prof[]{0, 1, 0, 0, 0, 0, 0, 0}, back_prof[8]{};
+      std::complex<float> spec_prof[6]{};
+      fft_prof.forward(pulse_prof, spec_prof);
+      fft_prof.inverse(spec_prof, back_prof);
+      check_near(back_prof[1], 1.0f);
+    }
+
+    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, multi-target PocketFFT "
+                 "profiles passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
     return 1;

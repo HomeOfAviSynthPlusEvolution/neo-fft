@@ -14,7 +14,7 @@ FetchContent_Declare(dualsynth2
   SOURCE_SUBDIR "${_ds_subdir}")
 FetchContent_Declare(pocketfft
   GIT_REPOSITORY https://github.com/mreineck/pocketfft.git
-  GIT_TAG 5f27d5a8f51c5c25030cb22abf434decc9faf0ff
+  GIT_TAG c90e55b3d529f8efa40ed01a20de22405f45fc65
   SOURCE_SUBDIR neo_fft_header_only)
 FetchContent_MakeAvailable(dualsynth2 pocketfft)
 unset(_ds_subdir)

@@ -1,8 +1,87 @@
 #include "spectral/fft.hpp"
-#include <pocketfft_hdronly.h>
+#include "spectral/fft_backend.hpp"
 #include <algorithm>
 
+#if NEO_FFT_ENABLE_SIMD
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
+#include <hwy/targets.h>
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+#endif
+
 namespace neo_fft {
+namespace detail {
+const FftBackend& native_fft() noexcept {
+#if NEO_FFT_ENABLE_SIMD
+#if NEO_FFT_FFT_X86_TARGETS
+  const auto targets = hwy::SupportedTargets();
+  if (targets & (HWY_AVX3 | HWY_AVX3_SPR | HWY_AVX3_ZEN4 | HWY_AVX3_DL)) {
+    if (avx512_fft().lanes > 1)
+      return avx512_fft();
+  }
+  if (targets & HWY_AVX2) {
+    if (avx2_fft().lanes > 1)
+      return avx2_fft();
+  }
+  if (targets & (HWY_SSE2 | HWY_SSSE3 | HWY_SSE4)) {
+    if (sse2_fft().lanes > 1)
+      return sse2_fft();
+  }
+#else
+  if (native_target_fft().lanes > 1)
+    return native_target_fft();
+#endif
+#endif
+  return scalar_fft();
+}
+} // namespace detail
+
+const FftBackend& backend_by_profile(FftProfile profile) noexcept {
+  switch (profile) {
+    case FftProfile::scalar:
+      return detail::scalar_fft();
+#if NEO_FFT_FFT_X86_TARGETS
+    case FftProfile::sse2:
+      return detail::sse2_fft();
+    case FftProfile::avx2:
+      return detail::avx2_fft();
+    case FftProfile::avx512:
+      return detail::avx512_fft();
+#endif
+    case FftProfile::native:
+    default:
+      return detail::native_fft();
+  }
+}
+
+int fft_lanes(FftProfile profile) noexcept {
+  return backend_by_profile(profile).lanes;
+}
+
+const char* fft_profile_name(FftProfile profile) noexcept {
+  switch (profile) {
+    case FftProfile::scalar:
+      return "pocketfft-scalar";
+    case FftProfile::sse2:
+      return "pocketfft-sse2";
+    case FftProfile::avx2:
+      return "pocketfft-avx2";
+    case FftProfile::avx512:
+      return "pocketfft-avx512";
+    case FftProfile::native:
+    default:
+      return fft_lanes(profile) > 1 ? "pocketfft-native" : "pocketfft-scalar";
+  }
+}
+
+const char* fft_backend_name(FftProfile profile) noexcept {
+  return backend_by_profile(profile).name;
+}
+
 namespace {
 template <class T>
 std::size_t validate(T* data, BatchLayout l, int h, int w) {
@@ -52,7 +131,9 @@ void hermitian(const std::complex<float>* p, BatchLayout l, int h, int w) {
   }
 }
 } // namespace
-RealFFT::RealFFT(int height, int width) : height_(dimension(height)), width_(dimension(width)) {
+
+RealFFT::RealFFT(int height, int width, FftProfile profile)
+    : height_(dimension(height)), width_(dimension(width)), profile_(profile), backend_(backend_by_profile(profile)) {
   plane_extent<float>(width_, height_, static_cast<std::ptrdiff_t>(mul_size(width_, sizeof(float))));
   plane_extent<std::complex<float>>(columns(), height_,
                                     static_cast<std::ptrdiff_t>(mul_size(columns(), sizeof(std::complex<float>))));
@@ -64,11 +145,8 @@ void RealFFT::forward(const float* in, BatchLayout r, std::complex<float>* out, 
     return;
   disjoint(in, rn, out, sn);
   scan(in, r, height_, width_);
-  const pocketfft::shape_t shape{std::size_t(height_), std::size_t(width_)}, axes{0, 1};
-  const pocketfft::stride_t rs{std::ptrdiff_t(r.row_stride * sizeof(float)), sizeof(float)};
-  const pocketfft::stride_t ss{std::ptrdiff_t(s.row_stride * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
   for (std::size_t b = 0; b < r.active; ++b)
-    pocketfft::r2c(shape, rs, ss, axes, true, in + b * r.distance, out + b * s.distance, 1.0f, 1);
+    backend_.r2c(height_, width_, in + b * r.distance, r.row_stride, out + b * s.distance, s.row_stride);
   scan(out, s, height_, columns());
 }
 void RealFFT::inverse(const std::complex<float>* in, BatchLayout s, float* out, BatchLayout r) const {
@@ -79,12 +157,9 @@ void RealFFT::inverse(const std::complex<float>* in, BatchLayout s, float* out, 
   disjoint(in, sn, out, rn);
   scan(in, s, height_, columns());
   hermitian(in, s, height_, width_);
-  const pocketfft::shape_t shape{std::size_t(height_), std::size_t(width_)}, axes{0, 1};
-  const pocketfft::stride_t rs{std::ptrdiff_t(r.row_stride * sizeof(float)), sizeof(float)};
-  const pocketfft::stride_t ss{std::ptrdiff_t(s.row_stride * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+  const float scale = 1.0f / (float(width_) * float(height_));
   for (std::size_t b = 0; b < r.active; ++b)
-    pocketfft::c2r(shape, ss, rs, axes, false, in + b * s.distance, out + b * r.distance,
-                   1.0f / (float(width_) * float(height_)), 1);
+    backend_.c2r(height_, width_, in + b * s.distance, s.row_stride, out + b * r.distance, r.row_stride, scale);
   scan(out, r, height_, width_);
 }
 void RealFFT::forward(const float* in, std::complex<float>* out) const {
