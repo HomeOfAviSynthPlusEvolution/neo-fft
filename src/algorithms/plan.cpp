@@ -1,4 +1,5 @@
 #include "algorithms/plan.hpp"
+#include "algorithms/pad.hpp"
 #include <cstring>
 #include <type_traits>
 
@@ -112,6 +113,7 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
         finite(src.row_ptr(y)[x]);
   }
   ws.reset();
+  pad_source(src, ws.padded(), geometry, format, algorithm);
   auto accum = ws.accum();
   auto block = ws.block();
   auto inverse = ws.inverse();
@@ -119,7 +121,6 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
   auto row = algorithm == Algorithm::FFT3D ? ws.row() : span2d::Plane<float>{};
   const float base =
       !format.floating && format.chroma && algorithm == Algorithm::FFT3D ? float(1 << (format.bits - 1)) : 0;
-  const float input_scale = format.floating ? 255.0f : 1.0f / float(1 << (format.bits - 8));
   const float volume = float(fft.width()) * float(fft.height());
   for (int by = 0; by < gy.count; ++by) {
     const int oy = by * gy.step;
@@ -129,12 +130,11 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
     for (int bx = 0; bx < gx.count; ++bx) {
       const int ox = bx * gx.step;
       for (int y = 0; y < gy.block; ++y) {
-        const auto* source = src.row_ptr(reflect(oy + y, gy));
+        const float* src_row = ws.padded().row_ptr(oy + y) + ox;
         for (int x = 0; x < gx.block; ++x) {
           const auto i = std::size_t(y) * gx.block + x;
-          const float q = float(source[reflect(ox + x, gx)]);
-          block[i] = algorithm == Algorithm::FFT3D ? ((q - base) * wy_.analysis[y]) * wx_.analysis[x]
-                                                   : (q * input_scale) * h_[i];
+          block[i] = algorithm == Algorithm::FFT3D ? (src_row[x] * wy_.analysis[y]) * wx_.analysis[x]
+                                                   : src_row[x] * h_[i];
         }
       }
       fft.forward(block.data(), spectrum.data());
