@@ -87,8 +87,111 @@ int main() {
       check_near(back_prof[1], 1.0f);
     }
 
-    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, multi-target PocketFFT "
-                 "profiles passed\n";
+    // Dedicated 16x16 Codelet regression tests
+    {
+      RealFFT fft16(16, 16);
+      CHECK(fft16.columns() == 9);
+
+      // 1. 256 unit delta impulses against independent double-precision direct_dft
+      for (int py = 0; py < 16; ++py) {
+        for (int px = 0; px < 16; ++px) {
+          float in[256]{};
+          in[py * 16 + px] = 1.0f;
+          std::complex<float> spec[16 * 9]{};
+          fft16.forward(in, spec);
+          const auto oracle = direct_dft(in, 16, 16, 16);
+          for (int i = 0; i < 16 * 9; ++i) {
+            check_near(spec[i].real(), oracle[i].real(), 5e-6);
+            check_near(spec[i].imag(), oracle[i].imag(), 5e-6);
+          }
+        }
+      }
+
+      // Random block test against direct_dft
+      float rnd_in[256];
+      for (int i = 0; i < 256; ++i) {
+        rnd_in[i] = float((i * 37 + 17) % 101 - 50) / 25.0f;
+      }
+      std::complex<float> rnd_spec[16 * 9]{};
+      fft16.forward(rnd_in, rnd_spec);
+      const auto oracle_rnd = direct_dft(rnd_in, 16, 16, 16);
+      for (int i = 0; i < 16 * 9; ++i) {
+        check_near(rnd_spec[i].real(), oracle_rnd[i].real(), 3e-5);
+        check_near(rnd_spec[i].imag(), oracle_rnd[i].imag(), 3e-5);
+      }
+
+      // 2. Cross inverse transform test (PocketFFT scalar forward -> Codelet inverse)
+      {
+        RealFFT fft_scalar(16, 16, FftProfile::scalar);
+        float orig[256], restored[256]{};
+        for (int i = 0; i < 256; ++i) {
+          orig[i] = float((i * 43 + 19) % 256 - 128) / 32.0f;
+        }
+        std::complex<float> scalar_spec[16 * 9]{};
+        fft_scalar.forward(orig, scalar_spec);
+
+        fft16.inverse(scalar_spec, restored);
+        for (int i = 0; i < 256; ++i) {
+          check_near(restored[i], orig[i], 1e-6);
+        }
+      }
+
+      // 3. Strides, batches (0, 1, 7, 8, 9, 16, 32, 64), input preservation, output sentinels
+      for (int rs : {16, 20, 24, 32}) {
+        for (int ss : {9, 12, 16}) {
+          for (std::size_t active : {0, 1, 7, 8, 9, 16, 32, 64}) {
+            const std::size_t total_blocks = 64;
+            const std::size_t in_dist = std::size_t(rs) * 16 + 8;
+            const std::size_t out_dist = std::size_t(ss) * 16 + 8;
+
+            auto in_buf = buffer<float>(in_dist * total_blocks);
+            auto out_buf = buffer<float>(in_dist * total_blocks);
+            auto spec_buf = buffer<std::complex<float>>(out_dist * total_blocks);
+
+            std::fill(in_buf.begin(), in_buf.end(), -999.0f);
+            std::fill(out_buf.begin(), out_buf.end(), -777.0f);
+            std::fill(spec_buf.begin(), spec_buf.end(), std::complex<float>(-888.0f, 444.0f));
+
+            for (std::size_t b = 0; b < active; ++b) {
+              for (int y = 0; y < 16; ++y) {
+                for (int x = 0; x < 16; ++x) {
+                  in_buf[b * in_dist + y * rs + x] = float((x * 17 + y * 13 + int(b) * 7) % 31 - 15) / 16.0f;
+                }
+              }
+            }
+
+            const auto in_orig = in_buf;
+            BatchLayout r_layout{std::size_t(rs), in_dist, total_blocks, active};
+            BatchLayout s_layout{std::size_t(ss), out_dist, total_blocks, active};
+
+            fft16.forward(in_buf.data(), r_layout, spec_buf.data(), s_layout);
+            CHECK(in_buf == in_orig);
+
+            const auto spec_orig = spec_buf;
+            fft16.inverse(spec_buf.data(), s_layout, out_buf.data(), r_layout);
+            CHECK(spec_buf == spec_orig);
+
+            for (std::size_t b = 0; b < total_blocks; ++b) {
+              if (b < active) {
+                for (int y = 0; y < 16; ++y) {
+                  for (int x = 0; x < 16; ++x) {
+                    const auto idx = b * in_dist + y * rs + x;
+                    check_near(out_buf[idx], in_buf[idx], 1e-6);
+                  }
+                }
+              } else {
+                for (std::size_t i = 0; i < in_dist; ++i) {
+                  CHECK(out_buf[b * in_dist + i] == -777.0f);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, 16x16 codelet, "
+                 "multi-target PocketFFT profiles passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
     return 1;
