@@ -6,6 +6,7 @@ namespace neo_fft::runtime {
 WorkspacePool::WorkspacePool(WorkspaceBudget budget, std::size_t max_capacity)
     : budget_(budget), max_capacity_(max_capacity) {
   require(max_capacity > 0, "max_capacity must be positive");
+  idle_.reserve(max_capacity);
 }
 
 WorkspaceLease WorkspacePool::acquire() {

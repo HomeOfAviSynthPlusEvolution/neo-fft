@@ -110,6 +110,19 @@ int main() {
     CHECK(pool.active_count() == 0);
     CHECK(pool.idle_count() == 1);
 
+    // Full capacity acquire and release
+    {
+      std::vector<WorkspaceLease> leases;
+      for (std::size_t i = 0; i < pool.max_capacity(); ++i) {
+        leases.push_back(pool.acquire());
+      }
+      CHECK(pool.active_count() == pool.max_capacity());
+      CHECK(pool.idle_count() == 0);
+      leases.clear();
+      CHECK(pool.active_count() == 0);
+      CHECK(pool.idle_count() == pool.max_capacity());
+    }
+
     // 4. Concurrent stress test
     constexpr int kThreads = 8;
     constexpr int kIters = 25;
