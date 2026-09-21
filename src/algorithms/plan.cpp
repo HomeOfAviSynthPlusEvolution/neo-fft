@@ -103,9 +103,11 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst) const {
   checked_plane(src.data(), src.width(), src.height(), src.stride_bytes(), se);
   checked_plane(dst.data(), dst.width(), dst.height(), dst.stride_bytes(), de);
   disjoint(src.data(), se, dst.data(), de);
-  for (int y = 0; y < src.height(); ++y)
-    for (int x = 0; x < src.width(); ++x)
-      finite(float(src.row_ptr(y)[x]));
+  if constexpr (std::is_same_v<T, float>) {
+    for (int y = 0; y < src.height(); ++y)
+      for (int x = 0; x < src.width(); ++x)
+        finite(src.row_ptr(y)[x]);
+  }
   auto accum = buffer<float>(mul_size(gx.cover, gy.cover));
   // One active block bounds FFT scratch independently of the number of origins.
   auto block = buffer<float>(fft.samples()), inverse = buffer<float>(fft.samples());
@@ -127,27 +129,27 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst) const {
           const auto i = std::size_t(y) * gx.block + x;
           const float q = float(source[reflect(ox + x, gx)]);
           block[i] = algorithm == Algorithm::FFT3D ? ((q - base) * wy_.analysis[y]) * wx_.analysis[x]
-                                                   : finite(q * input_scale) * h_[i];
+                                                   : (q * input_scale) * h_[i];
         }
       }
       fft.forward(block.data(), spectrum.data());
-      const float scale = grid_.empty() ? 0 : finite(finite(mean_scale_ * spectrum[0].real()) / grid_[0].real());
+      const float scale = grid_.empty() ? 0 : (mean_scale_ * spectrum[0].real()) / grid_[0].real();
       kernel_(spectrum.data(), grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, params_);
       fft.inverse(spectrum.data(), inverse.data());
       if (center_) {
         const int cy = gy.block / 2, cx = gx.block / 2;
         const auto i = std::size_t(cy) * gx.block + cx;
-        accum[std::size_t(oy + cy) * gx.cover + ox + cx] = finite(finite(inverse[i] * volume) * h_[i]);
+        accum[std::size_t(oy + cy) * gx.cover + ox + cx] = (inverse[i] * volume) * h_[i];
       } else
         for (int y = 0; y < gy.block; ++y)
           for (int x = 0; x < gx.block; ++x) {
             const auto i = std::size_t(y) * gx.block + x;
             if (algorithm == Algorithm::FFT3D) {
               auto& v = row[std::size_t(y) * gx.cover + ox + x];
-              v = finite(v + finite(inverse[i] * wx_.synthesis[x]));
+              v += inverse[i] * wx_.synthesis[x];
             } else {
               auto& v = accum[std::size_t(oy + y) * gx.cover + ox + x];
-              v = finite(v + finite(finite(inverse[i] * volume) * h_[i]));
+              v += (inverse[i] * volume) * h_[i];
             }
           }
     }
@@ -155,17 +157,16 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst) const {
       for (int y = 0; y < gy.block; ++y)
         for (int x = 0; x < gx.cover; ++x) {
           auto& v = accum[std::size_t(oy + y) * gx.cover + x];
-          v = finite(v + finite(row[std::size_t(y) * gx.cover + x] * wy_.synthesis[y]));
+          v += row[std::size_t(y) * gx.cover + x] * wy_.synthesis[y];
         }
   }
   for (int y = 0; y < dst.height(); ++y)
     for (int x = 0; x < dst.width(); ++x) {
       const float z = accum[std::size_t(y + gy.offset) * gx.cover + x + gx.offset];
       if constexpr (std::is_same_v<T, float>) {
-        dst.row_ptr(y)[x] = algorithm == Algorithm::FFT3D ? std::clamp(z, 0.0f, 1.0f) : finite(z * (1.0f / 255));
+        dst.row_ptr(y)[x] = algorithm == Algorithm::FFT3D ? std::clamp(z, 0.0f, 1.0f) : z * (1.0f / 255);
       } else {
-        const float v = algorithm == Algorithm::FFT3D ? finite((z + 0.5f) + base)
-                                                      : finite(finite(z * float(1 << (format.bits - 8))) + 0.5f);
+        const float v = algorithm == Algorithm::FFT3D ? (z + 0.5f) + base : (z * float(1 << (format.bits - 8))) + 0.5f;
         const float peak = float((1 << format.bits) - 1);
         dst.row_ptr(y)[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
       }

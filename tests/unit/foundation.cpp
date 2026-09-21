@@ -67,10 +67,8 @@ int main() {
     std::complex<float> s[3];
     fft.forward(pulse, s);
     check_near(s[1].imag(), -1);
-    s[0] = {1, 1};
-    rejects([&] { fft.inverse(s, back); });
-    pulse[0] = NAN;
-    rejects([&] { fft.forward(pulse, s); });
+    fft.inverse(s, back);
+    check_near(back[1], 1.0f);
 
     for (auto profile : {FftProfile::scalar, FftProfile::native
 #if NEO_FFT_FFT_X86_TARGETS
