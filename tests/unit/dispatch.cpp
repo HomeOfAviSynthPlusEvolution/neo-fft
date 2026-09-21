@@ -64,18 +64,54 @@ int main() {
               check_near(samples.data[i].imag(), expected[i].imag(), 2e-6);
             }
           }
-    Guarded huge(33);
-    for (int i = 0; i < 33; ++i)
-      huge.data[i] = {1e30f, 0};
-    rejects([&] { optimized(huge.data, nullptr, 33, 0, {}); });
+    // 1. Pure SIMD (exact vector length, count = 32): verify SIMD detection without scalar tail
+    {
+      SpectralParams overflow_params;
+      overflow_params.type = 2;
+      overflow_params.a = 3e38f;
 
-    Guarded overflow_test(33);
-    for (int i = 0; i < 33; ++i)
-      overflow_test.data[i] = {2.0f, 0};
-    SpectralParams overflow_params;
-    overflow_params.type = 2;
-    overflow_params.a = 3e38f;
-    rejects([&] { optimized(overflow_test.data, nullptr, 33, 0, overflow_params); });
+      // grid == nullptr: pure SIMD, index 0 overflows (2 * 3e38 = Inf)
+      Guarded pure_simd(32);
+      pure_simd.data[0] = {2.0f, 0};
+      rejects([&] { optimized(pure_simd.data, nullptr, 32, 0, overflow_params); });
+
+      // grid != nullptr: pure SIMD, index 0 overflows (re * gain + mr = Inf)
+      Guarded pure_simd_grid(32), grid(32);
+      pure_simd_grid.data[0] = {2.0f, 0};
+      rejects([&] { optimized(pure_simd_grid.data, grid.data, 32, 0.5f, overflow_params); });
+    }
+
+    // 2. SIMD overflow with scalar tail present (count = 33): tail elements are finite & non-overflowing
+    {
+      SpectralParams overflow_params;
+      overflow_params.type = 2;
+      overflow_params.a = 3e38f;
+
+      // grid == nullptr: only index 0 overflows, index 32 (tail) has 0.0f (gain * 0 = 0, finite)
+      Guarded overflow_test(33);
+      overflow_test.data[0] = {2.0f, 0};
+      rejects([&] { optimized(overflow_test.data, nullptr, 33, 0, overflow_params); });
+
+      // grid != nullptr: only index 0 overflows in SIMD, index 32 (tail) is finite
+      Guarded overflow_test_grid(33), grid(33);
+      overflow_test_grid.data[0] = {2.0f, 0};
+      rejects([&] { optimized(overflow_test_grid.data, grid.data, 33, 0.5f, overflow_params); });
+    }
+
+    // 3. Huge power overflow: only index 0 has huge amplitude, scalar tail is normal and finite
+    {
+      Guarded huge_no_grid(33);
+      huge_no_grid.data[0] = {1e30f, 0};
+      for (std::size_t i = 1; i < 33; ++i)
+        huge_no_grid.data[i] = {1.0f, 0};
+      rejects([&] { optimized(huge_no_grid.data, nullptr, 33, 0, {}); });
+
+      Guarded huge_grid(33), grid(33);
+      huge_grid.data[0] = {1e30f, 0};
+      for (std::size_t i = 1; i < 33; ++i)
+        huge_grid.data[i] = {1.0f, 0};
+      rejects([&] { optimized(huge_grid.data, grid.data, 33, 0.5f, {}); });
+    }
     std::cout << "spectral target: " << spectral_target(0) << "; scalar comparison and protected-page tails passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

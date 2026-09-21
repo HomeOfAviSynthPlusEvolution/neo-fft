@@ -187,10 +187,12 @@ void multithreaded_size_switching() {
           cfg.sigma = 2.0f;
           Plan plan(128, 128, {8, false, false}, cfg);
           auto src_buf = buffer<std::uint8_t>(128 * 128);
-          std::fill(src_buf.begin(), src_buf.end(), std::uint8_t((t + iter + b) % 256));
+          const auto val = std::uint8_t((t + iter + b) % 256);
+          std::fill(src_buf.begin(), src_buf.end(), val);
           auto dst_buf = buffer<std::uint8_t>(128 * 128);
           plan.process(checked_plane(src_buf.data(), 128, 128, 128, 128 * 128),
                        checked_plane(dst_buf.data(), 128, 128, 128, 128 * 128));
+          CHECK(dst_buf == src_buf);
         }
       }
     }));
