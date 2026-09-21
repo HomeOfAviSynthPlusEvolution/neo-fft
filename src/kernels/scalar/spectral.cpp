@@ -46,12 +46,6 @@ void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, st
   }
 }
 
-namespace {
-struct Fft3dTwiddles {
-  std::complex<float> fwd[6][5][5]{};
-  std::complex<float> inv[6][5][5]{};
-};
-
 const Fft3dTwiddles& get_fft3d_twiddles() noexcept {
   static const Fft3dTwiddles twiddles = []() {
     Fft3dTwiddles t{};
@@ -74,9 +68,8 @@ const Fft3dTwiddles& get_fft3d_twiddles() noexcept {
   }();
   return twiddles;
 }
-} // namespace
 
-void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
                            float degrid, const std::complex<float>* grid, float noise, float lower,
                            std::complex<float>* out) {
   require(T >= 1 && T <= 5, "FFT3D invalid T");
@@ -149,6 +142,12 @@ void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int
   }
 }
 
+void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           std::complex<float>* out) {
+  select_fft3d_temporal(0)(spectra, T, c, bins, degrid, grid, noise, lower, out);
+}
+
 #if !NEO_FFT_ENABLE_HIGHWAY
 SpectralKernel select_spectral(int opt) {
   require(opt == 0 || opt == 1, "unsupported opt: expected 0 or 1");
@@ -156,6 +155,14 @@ SpectralKernel select_spectral(int opt) {
 }
 const char* spectral_target(int opt) {
   select_spectral(opt);
+  return "scalar (Highway disabled)";
+}
+Fft3dTemporalKernel select_fft3d_temporal(int opt) {
+  require(opt == 0 || opt == 1, "unsupported opt: expected 0 or 1");
+  return fft3d_temporal_scalar;
+}
+const char* fft3d_temporal_target(int opt) {
+  select_fft3d_temporal(opt);
   return "scalar (Highway disabled)";
 }
 std::size_t optimal_l2_working_set_bytes() noexcept {

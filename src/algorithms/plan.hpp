@@ -60,6 +60,7 @@ private:
   std::unique_ptr<RealFFT3D> fft3d_;
   SpectralParams params_;
   SpectralKernel kernel_;
+  Fft3dTemporalKernel temporal_kernel_ = nullptr;
   SpatialKernels spatial_;
   float mean_scale_ = 0;
   bool center_ = false;

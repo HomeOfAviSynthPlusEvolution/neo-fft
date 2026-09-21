@@ -72,7 +72,8 @@ void validate(const DFTConfig& c) {
 Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), temporal_size(c.bt), fft(c.bh, c.bw),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
-      kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), mean_scale_(c.degrid),
+      kernel_(select_spectral(c.opt)), temporal_kernel_(select_fft3d_temporal(c.opt)),
+      spatial_(select_spatial(c.opt)), mean_scale_(c.degrid),
       pool_(runtime::make_workspace_budget(geometry, fft.samples(),
                                            fft.bins() * std::size_t(std::max(1, c.bt) + 1), true,
                                            std::max(1, c.bt),
@@ -240,9 +241,9 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           }
 
           std::complex<float>* out_spectrum = ws.spectrum(0).data() + T_slots * spatial_bins;
-          fft3d_temporal_filter(spectra_ptrs, T_slots, c, spatial_bins,
-                                mean_scale_, grid_.empty() ? nullptr : grid_.data(),
-                                noise, lower, out_spectrum);
+          temporal_kernel_(spectra_ptrs, T_slots, c, spatial_bins,
+                           mean_scale_, grid_.empty() ? nullptr : grid_.data(),
+                           noise, lower, out_spectrum);
 
           float* inv_buf = ws.inverse(0).data();
           fft.inverse(out_spectrum, inv_buf);
@@ -303,7 +304,6 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
       }
     } else {
       const int c = T_slots / 2;
-      const std::size_t volume_3d = std::size_t(T_slots) * gy.block * gx.block;
       const std::size_t bins_3d = std::size_t(T_slots) * gy.block * (gx.block / 2 + 1);
       const int spatial_block_size = gy.block * gx.block;
 

@@ -237,7 +237,59 @@ int main() {
       }
     }
 
+    // FFT3D Temporal Kernel Verification (SIMD vs Scalar)
+    {
+      const auto opt_temporal = select_fft3d_temporal(0);
+      const auto sc_temporal = select_fft3d_temporal(1);
+      CHECK(fft3d_temporal_target(0) != nullptr);
+      CHECK(fft3d_temporal_target(1) != nullptr);
+
+      for (int T : {1, 2, 3, 4, 5}) {
+        const int c = T / 2;
+        for (int bins : {1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 65, 128, 144, 544}) {
+          for (bool with_grid : {false, true}) {
+            std::vector<std::vector<std::complex<float>>> frames(T, std::vector<std::complex<float>>(bins));
+            std::vector<const std::complex<float>*> ptrs(T);
+            for (int j = 0; j < T; ++j) {
+              for (int k = 0; k < bins; ++k) {
+                frames[j][k] = {float((j * 17 + k * 11) % 43 - 21) / 10.0f,
+                                float((j * 13 + k * 19) % 37 - 18) / 10.0f};
+              }
+              ptrs[j] = frames[j].data();
+            }
+
+            std::vector<std::complex<float>> grid_data(bins);
+            if (with_grid) {
+              for (int k = 0; k < bins; ++k) {
+                grid_data[k] = {float(k % 7 + 1) * 0.5f, float(k % 5) * 0.25f};
+              }
+            }
+
+            std::vector<std::complex<float>> out_opt(bins), out_sc(bins);
+            const float degrid = with_grid ? 0.75f : 0.0f;
+            const float noise = 2.5f;
+            const float lower = 0.25f;
+
+            opt_temporal(ptrs.data(), T, c, bins, degrid, with_grid ? grid_data.data() : nullptr, noise, lower, out_opt.data());
+            sc_temporal(ptrs.data(), T, c, bins, degrid, with_grid ? grid_data.data() : nullptr, noise, lower, out_sc.data());
+
+            for (int k = 0; k < bins; ++k) {
+              if (std::abs(out_opt[k].real() - out_sc[k].real()) > 1e-4f ||
+                  std::abs(out_opt[k].imag() - out_sc[k].imag()) > 1e-4f) {
+                std::cout << "Mismatch T=" << T << " bins=" << bins << " grid=" << with_grid
+                          << " k=" << k << " opt=(" << out_opt[k].real() << "," << out_opt[k].imag()
+                          << ") sc=(" << out_sc[k].real() << "," << out_sc[k].imag() << ")\n";
+              }
+              check_near(out_opt[k].real(), out_sc[k].real(), 1e-4f);
+              check_near(out_opt[k].imag(), out_sc[k].imag(), 1e-4f);
+            }
+          }
+        }
+      }
+    }
+
     std::cout << "spectral target: " << spectral_target(0) << "; spatial target: " << spatial_target(0)
+              << "; temporal target: " << fft3d_temporal_target(0)
               << "; scalar comparison and protected-page tails passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

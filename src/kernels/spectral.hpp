@@ -11,9 +11,25 @@ using SpectralKernel = void (*)(std::complex<float>*, const std::complex<float>*
                                 const SpectralParams&);
 void spectral_scalar(std::complex<float>* spectrum, const std::complex<float>* grid, std::size_t count,
                      float grid_scale, const SpectralParams& p);
+struct Fft3dTwiddles {
+  std::complex<float> fwd[6][5][5]{};
+  std::complex<float> inv[6][5][5]{};
+};
+const Fft3dTwiddles& get_fft3d_twiddles() noexcept;
+
+using Fft3dTemporalKernel = void (*)(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                                     float degrid, const std::complex<float>* grid, float noise, float lower,
+                                     std::complex<float>* out);
+void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           std::complex<float>* out);
+Fft3dTemporalKernel select_fft3d_temporal(int opt);
+const char* fft3d_temporal_target(int opt);
+
 void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
                            float degrid, const std::complex<float>* grid, float noise, float lower,
                            std::complex<float>* out);
+
 SpectralKernel select_spectral(int opt);
 const char* spectral_target(int opt);
 std::size_t optimal_l2_working_set_bytes() noexcept;
