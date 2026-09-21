@@ -176,7 +176,7 @@ void multithreaded_size_switching() {
   const std::vector<int> sizes = {8, 12, 16, 20, 24, 32, 40, 48, 64};
   std::vector<std::future<void>> futures;
   for (int t = 0; t < 4; ++t) {
-    futures.emplace_back(std::async(std::launch::async, [&sizes, t] {
+    futures.emplace_back(std::async(std::launch::async, [sizes, t] {
       for (int iter = 0; iter < 30; ++iter) {
         for (int b : sizes) {
           FFT3DConfig cfg;
