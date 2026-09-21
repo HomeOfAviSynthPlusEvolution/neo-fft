@@ -1,4 +1,5 @@
 #include "algorithms/plan.hpp"
+#include "plugin/filter.hpp"
 #include "../test.hpp"
 #include <future>
 using namespace neo_fft;
@@ -365,11 +366,128 @@ void multithreaded_size_switching() {
   }
 }
 
+void filter_empty_planes_tests() {
+  using DFTFilter = plugin::Filter<Algorithm::DFTTest>;
+  DFTFilter::State state{};
+  state.source.width = 2;
+  state.source.height = 2;
+  state.source.num_frames = 10;
+  state.source.format = ds::VideoFormat{ds::ColorFamily::Gray, ds::SampleFormat::UInt8, 1, 0, 0};
+  state.temporal_size = 5;
+
+  std::uint8_t src[4] = {10, 20, 30, 40};
+  std::uint8_t dst[4] = {};
+
+  struct MockProvider : ds::VideoFrameProvider {
+    ds::VideoFrameView frame{};
+    int calls = 0;
+    ds::Result<ds::RequestedVideoFrame> get(int, int n) override {
+      ++calls;
+      return ds::Result<ds::RequestedVideoFrame>::success({0, n, frame, {}});
+    }
+  };
+
+  MockProvider provider;
+  provider.frame.format = state.source.format;
+  provider.frame.plane_count = 1;
+  provider.frame.planes[0] = {src, 2, 2, 2};
+
+  // 1. Stride = 0 on destination must be rejected
+  {
+    ds::MutableVideoFrameView output{};
+    output.format = state.source.format;
+    output.plane_count = 1;
+    output.planes[0] = {dst, 0, 2, 2};
+    ds::VideoProcessContext ctx{4, provider, output, &state};
+    rejects([&] { DFTFilter::process(ctx); });
+  }
+
+  // 2. Mismatched plane dimension against state.source must be rejected
+  {
+    ds::MutableVideoFrameView output{};
+    output.format = state.source.format;
+    output.plane_count = 1;
+    output.planes[0] = {dst, 4, 4, 1}; // height 1 != 2
+    ds::VideoProcessContext ctx{4, provider, output, &state};
+    rejects([&] { DFTFilter::process(ctx); });
+  }
+
+  // 3. Stride = 0 on source must be rejected
+  {
+    MockProvider bad_provider;
+    bad_provider.frame.format = state.source.format;
+    bad_provider.frame.plane_count = 1;
+    bad_provider.frame.planes[0] = {src, 0, 2, 2};
+    ds::MutableVideoFrameView output{};
+    output.format = state.source.format;
+    output.plane_count = 1;
+    output.planes[0] = {dst, 2, 2, 2};
+    ds::VideoProcessContext ctx{4, bad_provider, output, &state};
+    rejects([&] { DFTFilter::process(ctx); });
+  }
+
+  // 4. Null data pointer on destination must be rejected
+  {
+    ds::MutableVideoFrameView output{};
+    output.format = state.source.format;
+    output.plane_count = 1;
+    output.planes[0] = {nullptr, 2, 2, 2};
+    ds::VideoProcessContext ctx{4, provider, output, &state};
+    rejects([&] { DFTFilter::process(ctx); });
+  }
+
+  // 5. Valid empty-planes execution (DFTTest): copies target frame 4 cleanly and only fetches target frame
+  {
+    ds::MutableVideoFrameView output{};
+    output.format = state.source.format;
+    output.plane_count = 1;
+    output.planes[0] = {dst, 2, 2, 2};
+    ds::VideoProcessContext ctx{4, provider, output, &state};
+    provider.calls = 0;
+    DFTFilter::process(ctx);
+    CHECK(provider.calls == 1);
+    CHECK(dst[0] == 10 && dst[1] == 20 && dst[2] == 30 && dst[3] == 40);
+
+    // Request check: only requests target frame 4
+    std::vector<ds::VideoFrameRequest> requests;
+    ds::VideoRequestContext rctx{4, requests, {}, &state};
+    DFTFilter::request(rctx);
+    CHECK(requests.size() == 1);
+    CHECK(requests[0].frame_number == 4);
+  }
+
+  // 6. Valid empty-planes execution (FFT3D): copies target frame 3 cleanly and only fetches target frame
+  {
+    using FFTFilter = plugin::Filter<Algorithm::FFT3D>;
+    FFTFilter::State fstate{};
+    fstate.source = state.source;
+    fstate.temporal_size = 5;
+
+    std::uint8_t fdst[4] = {};
+    ds::MutableVideoFrameView output{};
+    output.format = state.source.format;
+    output.plane_count = 1;
+    output.planes[0] = {fdst, 2, 2, 2};
+    ds::VideoProcessContext ctx{3, provider, output, &fstate};
+    provider.calls = 0;
+    FFTFilter::process(ctx);
+    CHECK(provider.calls == 1);
+    CHECK(fdst[0] == 10 && fdst[1] == 20 && fdst[2] == 30 && fdst[3] == 40);
+
+    std::vector<ds::VideoFrameRequest> requests;
+    ds::VideoRequestContext rctx{3, requests, {}, &fstate};
+    FFTFilter::request(rctx);
+    CHECK(requests.size() == 1);
+    CHECK(requests[0].frame_number == 3);
+  }
+}
+
 int main() {
   try {
     windows();
     filters();
     temporal_plan_tests();
+    filter_empty_planes_tests();
     identity<std::uint8_t>({8, false, false});
     identity<std::uint16_t>({10, false, true});
     identity<std::uint16_t>({16, false, false});

@@ -123,9 +123,12 @@ struct Filter {
     } else {
       const int c = int(src_views.size()) / 2;
       const auto& src = src_views[c];
+      const auto se = plane_extent<T>(src.width, src.height, src.stride_bytes);
+      const auto s = checked_plane(static_cast<const T*>(static_cast<const void*>(src.data)),
+                                   src.width, src.height, src.stride_bytes, se);
+      disjoint(s.data(), se, d.data(), de);
       for (int y = 0; y < src.height; ++y)
-        std::memcpy(d.row_ptr(y), static_cast<const char*>(src.data) + y * src.stride_bytes,
-                    std::size_t(src.width) * sizeof(T));
+        std::memcpy(d.row_ptr(y), s.row_ptr(y), std::size_t(src.width) * sizeof(T));
     }
   }
   static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx) {
@@ -136,36 +139,20 @@ struct Filter {
     const bool has_active_plans = std::any_of(state.plans.begin(), state.plans.end(), [](const auto& p) {
       return p != nullptr;
     });
-    if (!has_active_plans) {
-      auto holder = unwrap(ctx.frames.get(0, n));
-      require(holder.frame.format == state.source.format && ctx.dst.format == state.source.format &&
-                  holder.frame.plane_count == state.source.format.plane_count &&
-                  ctx.dst.plane_count == holder.frame.plane_count,
-              "frame format differs from plan");
-      for (int p = 0; p < ctx.dst.plane_count; ++p) {
-        const auto& s = holder.frame.plane(p);
-        const auto& d = ctx.dst.plane(p);
-        require(d.width == s.width && d.height == s.height, "frame plane dimensions differ from plan");
-        for (int y = 0; y < s.height; ++y) {
-          std::memcpy(static_cast<char*>(d.data) + y * d.stride_bytes,
-                      static_cast<const char*>(s.data) + y * s.stride_bytes,
-                      std::size_t(s.width) * ds::bytes_per_sample(state.source.format.sample_format));
-        }
-      }
-      return ds::Result<ds::VideoProcessResult>::success({});
-    }
 
     int T = 1;
-    int c = 0;
     std::vector<ds::RequestedVideoFrame> frames_holder;
 
-    if constexpr (A == Algorithm::FFT3D) {
+    if (!has_active_plans) {
+      frames_holder.reserve(1);
+      frames_holder.push_back(unwrap(ctx.frames.get(0, n)));
+    } else if constexpr (A == Algorithm::FFT3D) {
       const int bt = state.temporal_size;
       const int left = bt / 2;
       const int right = (bt - 1) / 2;
       const bool fallback = (bt <= 1) || (n < left || N - 1 - n < right);
       T = fallback ? 1 : bt;
-      c = T / 2;
+      const int c = T / 2;
       frames_holder.reserve(T);
       for (int j = 0; j < T; ++j) {
         const int f = fallback ? n : (n - c + j);
@@ -173,7 +160,7 @@ struct Filter {
       }
     } else {
       T = state.temporal_size;
-      c = T / 2;
+      const int c = T / 2;
       frames_holder.reserve(T);
       for (int j = 0; j < T; ++j) {
         const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
