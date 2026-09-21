@@ -243,8 +243,107 @@ int main() {
         }
       }
     }
+    {
+      RealFFT fft32(32, 32);
+      CHECK(fft32.columns() == 17);
 
-    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, 16x16 and 8x8 codelets, "
+      // 1. Impulses across diagonals and boundaries against double-precision direct_dft
+      for (int p = 0; p < 32; ++p) {
+        float in[1024]{};
+        in[p * 32 + p] = 1.0f;
+        std::complex<float> spec[32 * 17]{};
+        fft32.forward(in, spec);
+        const auto oracle = direct_dft(in, 32, 32, 32);
+        for (int i = 0; i < 32 * 17; ++i) {
+          check_near(spec[i].real(), oracle[i].real(), 1.5e-4);
+          check_near(spec[i].imag(), oracle[i].imag(), 1.5e-4);
+        }
+      }
+
+      // Random block test against direct_dft
+      float rnd_in[1024];
+      for (int i = 0; i < 1024; ++i) {
+        rnd_in[i] = float((i * 47 + 23) % 103 - 51) / 25.0f;
+      }
+      std::complex<float> rnd_spec[32 * 17]{};
+      fft32.forward(rnd_in, rnd_spec);
+      const auto oracle_rnd = direct_dft(rnd_in, 32, 32, 32);
+      for (int i = 0; i < 32 * 17; ++i) {
+        check_near(rnd_spec[i].real(), oracle_rnd[i].real(), 1.5e-4);
+        check_near(rnd_spec[i].imag(), oracle_rnd[i].imag(), 1.5e-4);
+      }
+
+      // 2. Cross inverse transform test (PocketFFT scalar forward -> Codelet inverse)
+      {
+        RealFFT fft_scalar(32, 32, FftProfile::scalar);
+        float orig[1024], restored[1024]{};
+        for (int i = 0; i < 1024; ++i) {
+          orig[i] = float((i * 53 + 29) % 256 - 128) / 32.0f;
+        }
+        std::complex<float> scalar_spec[32 * 17]{};
+        fft_scalar.forward(orig, scalar_spec);
+
+        fft32.inverse(scalar_spec, restored);
+        for (int i = 0; i < 1024; ++i) {
+          check_near(restored[i], orig[i], 1e-5);
+        }
+      }
+
+      // 3. Strides, batches (0, 1, 7, 8, 16, 32), input preservation, output sentinels
+      for (int rs : {32, 40, 48}) {
+        for (int ss : {17, 20, 24}) {
+          for (std::size_t active : {0, 1, 7, 8, 16, 32}) {
+            const std::size_t total_blocks = 32;
+            const std::size_t in_dist = std::size_t(rs) * 32 + 8;
+            const std::size_t out_dist = std::size_t(ss) * 32 + 8;
+
+            auto in_buf = buffer<float>(in_dist * total_blocks);
+            auto out_buf = buffer<float>(in_dist * total_blocks);
+            auto spec_buf = buffer<std::complex<float>>(out_dist * total_blocks);
+
+            std::fill(in_buf.begin(), in_buf.end(), -999.0f);
+            std::fill(out_buf.begin(), out_buf.end(), -777.0f);
+            std::fill(spec_buf.begin(), spec_buf.end(), std::complex<float>(-888.0f, 444.0f));
+
+            for (std::size_t b = 0; b < active; ++b) {
+              for (int y = 0; y < 32; ++y) {
+                for (int x = 0; x < 32; ++x) {
+                  in_buf[b * in_dist + y * rs + x] = float((x * 23 + y * 17 + int(b) * 9) % 37 - 18) / 19.0f;
+                }
+              }
+            }
+
+            const auto in_orig = in_buf;
+            BatchLayout r_layout{std::size_t(rs), in_dist, total_blocks, active};
+            BatchLayout s_layout{std::size_t(ss), out_dist, total_blocks, active};
+
+            fft32.forward(in_buf.data(), r_layout, spec_buf.data(), s_layout);
+            CHECK(in_buf == in_orig);
+
+            const auto spec_orig = spec_buf;
+            fft32.inverse(spec_buf.data(), s_layout, out_buf.data(), r_layout);
+            CHECK(spec_buf == spec_orig);
+
+            for (std::size_t b = 0; b < total_blocks; ++b) {
+              if (b < active) {
+                for (int y = 0; y < 32; ++y) {
+                  for (int x = 0; x < 32; ++x) {
+                    const auto idx = b * in_dist + y * rs + x;
+                    check_near(out_buf[idx], in_buf[idx], 1e-5);
+                  }
+                }
+              } else {
+                for (std::size_t i = 0; i < in_dist; ++i) {
+                  CHECK(out_buf[b * in_dist + i] == -777.0f);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, 8x8, 16x16, 32x32 codelets, "
                  "multi-target PocketFFT profiles passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
