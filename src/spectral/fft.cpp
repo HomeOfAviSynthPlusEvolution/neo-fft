@@ -82,8 +82,30 @@ const char* fft_backend_name(FftProfile profile) noexcept {
   return backend_by_profile(profile).name;
 }
 
+bool fft_profile_supported(FftProfile profile) noexcept {
+  switch (profile) {
+    case FftProfile::scalar:
+      return true;
+#if NEO_FFT_ENABLE_SIMD
+#if NEO_FFT_FFT_X86_TARGETS
+    case FftProfile::sse2:
+      return (hwy::SupportedTargets() & (HWY_SSE2 | HWY_SSSE3 | HWY_SSE4)) != 0;
+    case FftProfile::avx2:
+      return (hwy::SupportedTargets() & HWY_AVX2) != 0;
+    case FftProfile::avx512:
+      return (hwy::SupportedTargets() & (HWY_AVX3 | HWY_AVX3_SPR | HWY_AVX3_ZEN4 | HWY_AVX3_DL)) != 0;
+#endif
+    case FftProfile::native:
+      return true;
+#endif
+    default:
+      return profile == FftProfile::scalar || profile == FftProfile::native;
+  }
+}
+
 RealFFT::RealFFT(int height, int width, FftProfile profile)
     : height_(dimension(height)), width_(dimension(width)), profile_(profile), backend_(backend_by_profile(profile)) {
+  require(fft_profile_supported(profile), "FFT profile is not supported by current CPU");
   plane_extent<float>(width_, height_, static_cast<std::ptrdiff_t>(mul_size(width_, sizeof(float))));
   plane_extent<std::complex<float>>(columns(), height_,
                                     static_cast<std::ptrdiff_t>(mul_size(columns(), sizeof(std::complex<float>))));

@@ -128,7 +128,7 @@ int main() {
     constexpr int kIters = 25;
     std::vector<std::future<void>> futures;
     for (int t = 0; t < kThreads; ++t) {
-      futures.push_back(std::async(std::launch::async, [&pool, t] {
+      futures.push_back(std::async(std::launch::async, [&pool, t, kIters] {
         for (int i = 0; i < kIters; ++i) {
           auto lease = pool.acquire();
           lease->reset();

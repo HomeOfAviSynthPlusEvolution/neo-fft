@@ -21,10 +21,10 @@ int main() {
         const std::size_t rd = rs * h + 5, sd = ss * h + 3;
         for (std::size_t active : {0, 1, 3, 4}) {
           auto in = buffer<float>(rd * 4), out = buffer<float>(rd * 4);
-          std::fill(in.begin(), in.end(), -999);
-          std::fill(out.begin(), out.end(), -777);
+          std::fill(in.begin(), in.end(), -999.0f);
+          std::fill(out.begin(), out.end(), -777.0f);
           auto spec = buffer<std::complex<float>>(sd * 4);
-          std::fill(spec.begin(), spec.end(), std::complex<float>(-888, 444));
+          std::fill(spec.begin(), spec.end(), std::complex<float>(-888.0f, 444.0f));
           for (std::size_t b = 0; b < active; ++b)
             for (int y = 0; y < h; ++y)
               for (int x = 0; x < w; ++x)
@@ -76,10 +76,14 @@ int main() {
                          FftProfile::sse2, FftProfile::avx2, FftProfile::avx512
 #endif
          }) {
-      RealFFT fft_prof(2, 4, profile);
-      CHECK(fft_prof.lanes() >= 1);
       CHECK(fft_profile_name(profile) != nullptr);
       CHECK(fft_backend_name(profile) != nullptr);
+      if (!fft_profile_supported(profile)) {
+        rejects([&] { RealFFT(2, 4, profile); });
+        continue;
+      }
+      RealFFT fft_prof(2, 4, profile);
+      CHECK(fft_prof.lanes() >= 1);
       float pulse_prof[]{0, 1, 0, 0, 0, 0, 0, 0}, back_prof[8]{};
       std::complex<float> spec_prof[6]{};
       fft_prof.forward(pulse_prof, spec_prof);

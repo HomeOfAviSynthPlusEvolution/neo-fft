@@ -36,5 +36,6 @@ int fft_lanes(FftProfile profile = FftProfile::native) noexcept;
 const char* fft_profile_name(FftProfile profile = FftProfile::native) noexcept;
 const char* fft_backend_name(FftProfile profile = FftProfile::native) noexcept;
 const FftBackend& backend_by_profile(FftProfile profile) noexcept;
+bool fft_profile_supported(FftProfile profile = FftProfile::native) noexcept;
 
 } // namespace neo_fft
