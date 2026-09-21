@@ -46,6 +46,36 @@ void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, st
   }
 }
 
+namespace {
+struct Fft3dTwiddles {
+  std::complex<float> fwd[6][5][5]{};
+  std::complex<float> inv[6][5][5]{};
+};
+
+const Fft3dTwiddles& get_fft3d_twiddles() noexcept {
+  static const Fft3dTwiddles twiddles = []() {
+    Fft3dTwiddles t{};
+    constexpr double kPi = 3.1415926535897932384626433832795;
+    for (int T = 2; T <= 5; ++T) {
+      for (int m = 0; m < T; ++m) {
+        for (int j = 0; j < T; ++j) {
+          const double angle = -2.0 * kPi * double(j * m) / double(T);
+          t.fwd[T][m][j] = {float(std::cos(angle)), float(std::sin(angle))};
+        }
+      }
+      for (int c = 0; c < T; ++c) {
+        for (int m = 0; m < T; ++m) {
+          const double inv_angle = +2.0 * kPi * double(c * m) / double(T);
+          t.inv[T][c][m] = {float(std::cos(inv_angle)), float(std::sin(inv_angle))};
+        }
+      }
+    }
+    return t;
+  }();
+  return twiddles;
+}
+} // namespace
+
 void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
                            float degrid, const std::complex<float>* grid, float noise, float lower,
                            std::complex<float>* out) {
@@ -68,17 +98,9 @@ void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int
     return;
   }
 
-  constexpr double kPi = 3.1415926535897932384626433832795;
-  std::complex<float> fwd_twiddle[5][5];
-  std::complex<float> inv_twiddle[5];
-  for (int m = 0; m < T; ++m) {
-    for (int j = 0; j < T; ++j) {
-      const double angle = -2.0 * kPi * double(j * m) / double(T);
-      fwd_twiddle[m][j] = {float(std::cos(angle)), float(std::sin(angle))};
-    }
-    const double inv_angle = +2.0 * kPi * double(c * m) / double(T);
-    inv_twiddle[m] = {float(std::cos(inv_angle)), float(std::sin(inv_angle))};
-  }
+  const auto& twiddles = get_fft3d_twiddles();
+  const auto* fwd_twiddle = twiddles.fwd[T];
+  const auto* inv_twiddle = twiddles.inv[T][c];
 
   const float g_ratio = (grid && degrid != 0.0f && grid[0].real() != 0.0f)
                             ? finite((degrid * spectra[c][0].real()) / grid[0].real())

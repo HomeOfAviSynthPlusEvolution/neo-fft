@@ -73,7 +73,8 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), temporal_size(c.bt), fft(c.bh, c.bw),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
       kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), mean_scale_(c.degrid),
-      pool_(runtime::make_workspace_budget(geometry, fft.samples(), fft.bins() * std::size_t(std::max(1, c.bt)), true,
+      pool_(runtime::make_workspace_budget(geometry, fft.samples(),
+                                           fft.bins() * std::size_t(std::max(1, c.bt) + 1), true,
                                            std::max(1, c.bt),
                                            select_optimal_batch_size(fft.samples(), geometry.x.count))) {
   valid_format(f);
@@ -224,32 +225,31 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
             spatial_.scatter_fft3d_block(inv_row, wx_s, r_row, gx.block);
           }
         } else {
-          std::vector<std::vector<std::complex<float>>> spectra_slots(T_slots, std::vector<std::complex<float>>(spatial_bins));
-          std::vector<const std::complex<float>*> spectra_ptrs(T_slots);
-          std::vector<float> block_buf(fft.samples());
-
+          const std::complex<float>* spectra_ptrs[5];
           for (int j = 0; j < T_slots; ++j) {
+            float* blk = ws.block(0).data();
             for (int y = 0; y < gy.block; ++y) {
               const float* src_row = ws.padded(j).row_ptr(oy + y) + ox;
-              float* blk_row = block_buf.data() + y * gx.block;
+              float* blk_row = blk + y * gx.block;
               const float wy = wy_.analysis[y];
               spatial_.gather_fft3d(src_row, wx_a, wy, blk_row, gx.block);
             }
-            fft.forward(block_buf.data(), spectra_slots[j].data());
-            spectra_ptrs[j] = spectra_slots[j].data();
+            std::complex<float>* spec_j = ws.spectrum(0).data() + j * spatial_bins;
+            fft.forward(blk, spec_j);
+            spectra_ptrs[j] = spec_j;
           }
 
-          std::vector<std::complex<float>> out_spectrum(spatial_bins);
-          fft3d_temporal_filter(spectra_ptrs.data(), T_slots, c, spatial_bins,
-                               mean_scale_, grid_.empty() ? nullptr : grid_.data(),
-                               noise, lower, out_spectrum.data());
+          std::complex<float>* out_spectrum = ws.spectrum(0).data() + T_slots * spatial_bins;
+          fft3d_temporal_filter(spectra_ptrs, T_slots, c, spatial_bins,
+                                mean_scale_, grid_.empty() ? nullptr : grid_.data(),
+                                noise, lower, out_spectrum);
 
-          std::vector<float> inv_buf(fft.samples());
-          fft.inverse(out_spectrum.data(), inv_buf.data());
+          float* inv_buf = ws.inverse(0).data();
+          fft.inverse(out_spectrum, inv_buf);
 
           for (int y = 0; y < gy.block; ++y) {
             float* r_row = row.row_ptr(y) + ox;
-            const float* inv_row = inv_buf.data() + y * gx.block;
+            const float* inv_row = inv_buf + y * gx.block;
             spatial_.scatter_fft3d_block(inv_row, wx_s, r_row, gx.block);
           }
         }
@@ -312,11 +312,11 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
         for (int bx_start = 0; bx_start < gx.count; ++bx_start) {
           const int ox = bx_start * gx.step;
 
-          std::vector<float> block_3d(volume_3d);
+          float* block_3d = ws.block(0).data();
           for (int z = 0; z < T_slots; ++z) {
             const auto pad_z = ws.padded(z);
             const float* h_z = h_.data() + z * spatial_block_size;
-            float* blk_z = block_3d.data() + z * spatial_block_size;
+            float* blk_z = block_3d + z * spatial_block_size;
             for (int y = 0; y < gy.block; ++y) {
               const float* src_row = pad_z.row_ptr(oy + y) + ox;
               float* blk_row = blk_z + y * gx.block;
@@ -325,18 +325,18 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
             }
           }
 
-          std::vector<std::complex<float>> spec_3d(bins_3d);
-          fft3d_->forward(block_3d.data(), spec_3d.data());
+          std::complex<float>* spec_3d = ws.spectrum(0).data();
+          fft3d_->forward(block_3d, spec_3d);
 
           const float g_ratio = (!grid_.empty() && mean_scale_ != 0.0f && grid_[0].real() != 0.0f)
                                     ? (mean_scale_ * spec_3d[0].real() / grid_[0].real())
                                     : 0.0f;
-          kernel_(spec_3d.data(), grid_.empty() ? nullptr : grid_.data(), bins_3d, g_ratio, params_);
+          kernel_(spec_3d, grid_.empty() ? nullptr : grid_.data(), bins_3d, g_ratio, params_);
 
-          std::vector<float> inv_3d(volume_3d);
-          fft3d_->inverse(spec_3d.data(), inv_3d.data());
+          float* inv_3d = ws.inverse(0).data();
+          fft3d_->inverse(spec_3d, inv_3d);
 
-          const float* inv_c = inv_3d.data() + c * spatial_block_size;
+          const float* inv_c = inv_3d + c * spatial_block_size;
           const float* h_syn_c = h_synthesis_.data() + c * spatial_block_size;
 
           if (center_) {
