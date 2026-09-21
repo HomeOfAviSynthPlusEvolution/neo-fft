@@ -20,6 +20,14 @@ Geometry geometry_dft(int w, int h, const DFTConfig& c) {
   validate(c);
   return {dft_axis(w, c.block, c.mode, c.overlap), dft_axis(h, c.block, c.mode, c.overlap)};
 }
+int select_optimal_batch_size(std::size_t block_samples, int gx_count) noexcept {
+  constexpr std::size_t kTargetL2Bytes = 256 * 1024;
+  const std::size_t bytes_per_block = block_samples * 16;
+  int k = static_cast<int>(kTargetL2Bytes / (bytes_per_block ? bytes_per_block : 1));
+  k = (k / 16) * 16;
+  k = std::clamp(k, 8, 32);
+  return std::max(1, std::min(gx_count, k));
+}
 } // namespace
 void validate(const FFT3DConfig& c) {
   require(c.bw >= 2 && c.bh >= 2, "FFT3D bw/bh must be >=2");
@@ -52,7 +60,8 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), fft(c.bh, c.bw),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
       kernel_(select_spectral(c.opt)), mean_scale_(c.degrid),
-      pool_(runtime::make_workspace_budget(geometry, fft, true, 1)) {
+      pool_(runtime::make_workspace_budget(geometry, fft, true,
+                                           select_optimal_batch_size(fft.samples(), geometry.x.count))) {
   valid_format(f);
   const float factor = f.floating ? 1.0f / 255 : float(1 << (f.bits - 8));
   const float sigma = finite(c.sigma * factor);
@@ -72,7 +81,8 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
 Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), fft(c.block, c.block),
       kernel_(select_spectral(c.opt)), mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
-      pool_(runtime::make_workspace_budget(geometry, fft, false, 1)) {
+      pool_(runtime::make_workspace_budget(geometry, fft, false,
+                                           select_optimal_batch_size(fft.samples(), geometry.x.count))) {
   valid_format(f);
   auto win = dft_window(c.block, c.mode == 0 ? 0 : c.overlap, c.mode, c.swin, c.twin, c.sbeta, c.tbeta);
   h_ = std::move(win.h);
@@ -115,46 +125,60 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
   ws.reset();
   pad_source(src, ws.padded(), geometry, format, algorithm);
   auto accum = ws.accum();
-  auto block = ws.block();
-  auto inverse = ws.inverse();
-  auto spectrum = ws.spectrum();
   auto row = algorithm == Algorithm::FFT3D ? ws.row() : span2d::Plane<float>{};
   const float base =
       !format.floating && format.chroma && algorithm == Algorithm::FFT3D ? float(1 << (format.bits - 1)) : 0;
   const float volume = float(fft.width()) * float(fft.height());
+  const int batch_cap = ws.budget().batch_size;
+  BatchLayout r_layout{std::size_t(fft.width()), fft.samples(), std::size_t(batch_cap), 0};
+  BatchLayout s_layout{std::size_t(fft.columns()), fft.bins(), std::size_t(batch_cap), 0};
   for (int by = 0; by < gy.count; ++by) {
     const int oy = by * gy.step;
     if (!row.empty())
       std::memset(row.data(), 0,
                   static_cast<std::size_t>(row.stride_bytes()) * static_cast<std::size_t>(row.height()));
-    for (int bx = 0; bx < gx.count; ++bx) {
-      const int ox = bx * gx.step;
-      for (int y = 0; y < gy.block; ++y) {
-        const float* src_row = ws.padded().row_ptr(oy + y) + ox;
-        for (int x = 0; x < gx.block; ++x) {
-          const auto i = std::size_t(y) * gx.block + x;
-          block[i] = algorithm == Algorithm::FFT3D ? (src_row[x] * wy_.analysis[y]) * wx_.analysis[x]
-                                                   : src_row[x] * h_[i];
-        }
-      }
-      fft.forward(block.data(), spectrum.data());
-      const float scale = grid_.empty() ? 0 : (mean_scale_ * spectrum[0].real()) / grid_[0].real();
-      kernel_(spectrum.data(), grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, params_);
-      fft.inverse(spectrum.data(), inverse.data());
-      if (center_) {
-        const int cy = gy.block / 2, cx = gx.block / 2;
-        const auto i = std::size_t(cy) * gx.block + cx;
-        accum(oy + cy, ox + cx) = (inverse[i] * volume) * h_[i];
-      } else
-        for (int y = 0; y < gy.block; ++y)
+    for (int bx_start = 0; bx_start < gx.count; bx_start += batch_cap) {
+      const int k = std::min(batch_cap, gx.count - bx_start);
+      r_layout.active = std::size_t(k);
+      s_layout.active = std::size_t(k);
+      for (int b = 0; b < k; ++b) {
+        const int ox = (bx_start + b) * gx.step;
+        float* blk = ws.block(b).data();
+        for (int y = 0; y < gy.block; ++y) {
+          const float* src_row = ws.padded().row_ptr(oy + y) + ox;
           for (int x = 0; x < gx.block; ++x) {
             const auto i = std::size_t(y) * gx.block + x;
-            if (algorithm == Algorithm::FFT3D) {
-              row(y, ox + x) += inverse[i] * wx_.synthesis[x];
-            } else {
-              accum(oy + y, ox + x) += (inverse[i] * volume) * h_[i];
-            }
+            blk[i] = algorithm == Algorithm::FFT3D ? (src_row[x] * wy_.analysis[y]) * wx_.analysis[x]
+                                                   : src_row[x] * h_[i];
           }
+        }
+      }
+      fft.forward(ws.block(0).data(), r_layout, ws.spectrum(0).data(), s_layout);
+      for (int b = 0; b < k; ++b) {
+        auto* spec_b = ws.spectrum(b).data();
+        const float scale = grid_.empty() ? 0 : (mean_scale_ * spec_b[0].real()) / grid_[0].real();
+        kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, params_);
+      }
+      fft.inverse(ws.spectrum(0).data(), s_layout, ws.inverse(0).data(), r_layout);
+      for (int b = 0; b < k; ++b) {
+        const int ox = (bx_start + b) * gx.step;
+        const float* inv_b = ws.inverse(b).data();
+        if (center_) {
+          const int cy = gy.block / 2, cx = gx.block / 2;
+          const auto i = std::size_t(cy) * gx.block + cx;
+          accum(oy + cy, ox + cx) = (inv_b[i] * volume) * h_[i];
+        } else {
+          for (int y = 0; y < gy.block; ++y)
+            for (int x = 0; x < gx.block; ++x) {
+              const auto i = std::size_t(y) * gx.block + x;
+              if (algorithm == Algorithm::FFT3D) {
+                row(y, ox + x) += inv_b[i] * wx_.synthesis[x];
+              } else {
+                accum(oy + y, ox + x) += (inv_b[i] * volume) * h_[i];
+              }
+            }
+        }
+      }
     }
     if (!row.empty())
       for (int y = 0; y < gy.block; ++y) {
