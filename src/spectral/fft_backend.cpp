@@ -1,4 +1,5 @@
 #include "spectral/fft_backend.hpp"
+#include "spectral/codelets/fft16x16.hpp"
 
 #include <algorithm>
 #include <array>
@@ -184,6 +185,12 @@ inline void ensure_plans(int height, int width) {
 
 void r2c(int height, int width, const float* in, std::size_t in_row_stride, std::complex<float>* out,
          std::size_t out_row_stride) {
+#if defined(__AVX2__)
+  if (height == 16 && width == 16) {
+    codelet::fft16x16_r2c(in, in_row_stride, out, out_row_stride);
+    return;
+  }
+#endif
   ensure_plans(height, width);
   ScratchScope scope;
   const pf::shape_t shape{std::size_t(height), std::size_t(width)}, axes{0, 1};
@@ -194,6 +201,12 @@ void r2c(int height, int width, const float* in, std::size_t in_row_stride, std:
 
 void c2r(int height, int width, const std::complex<float>* in, std::size_t in_row_stride, float* out,
          std::size_t out_row_stride, float fct) {
+#if defined(__AVX2__)
+  if (height == 16 && width == 16) {
+    codelet::fft16x16_c2r(in, in_row_stride, out, out_row_stride, fct);
+    return;
+  }
+#endif
   ensure_plans(height, width);
   ScratchScope scope;
   const pf::shape_t shape{std::size_t(height), std::size_t(width)}, axes{0, 1};
@@ -207,6 +220,12 @@ void batch_r2c(std::size_t batch, int height, int width, const float* in, std::s
                std::size_t out_row_stride) {
   if (batch == 0)
     return;
+#if defined(__AVX2__)
+  if (height == 16 && width == 16) {
+    codelet::batch_fft16x16_r2c(batch, in, in_dist, in_row_stride, out, out_dist, out_row_stride);
+    return;
+  }
+#endif
   if (batch == 1) {
     r2c(height, width, in, in_row_stride, out, out_row_stride);
     return;
@@ -225,6 +244,12 @@ void batch_c2r(std::size_t batch, int height, int width, const std::complex<floa
                std::size_t in_row_stride, float* out, std::size_t out_dist, std::size_t out_row_stride, float fct) {
   if (batch == 0)
     return;
+#if defined(__AVX2__)
+  if (height == 16 && width == 16) {
+    codelet::batch_fft16x16_c2r(batch, in, in_dist, in_row_stride, out, out_dist, out_row_stride, fct);
+    return;
+  }
+#endif
   if (batch == 1) {
     c2r(height, width, in, in_row_stride, out, out_row_stride, fct);
     return;
