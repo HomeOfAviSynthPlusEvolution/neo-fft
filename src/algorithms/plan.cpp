@@ -83,6 +83,9 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
   beta_ = c.beta;
   params_.a = finite((sigma_eff_ * sigma_eff_) / norm_);
   params_.floor = (c.beta - 1) / c.beta;
+  for (int T = 1; T <= std::max(1, c.bt); ++T) {
+    finite(((float(T) * sigma_eff_) * sigma_eff_) / norm_);
+  }
   if (c.degrid != 0) {
     auto block = buffer<float>(fft.samples());
     const float peak = f.floating ? 1.0f : float((1 << f.bits) - 1);
@@ -143,6 +146,13 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   const auto& gx = geometry.x;
   const auto& gy = geometry.y;
   const int T_slots = int(sources.size());
+  if (algorithm == Algorithm::DFTTest) {
+    require(T_slots == temporal_size, "DFTTest sources size must match plan temporal_size");
+  } else {
+    require(T_slots == temporal_size || T_slots == 1,
+            "FFT3D sources size must match plan temporal_size or single-frame fallback");
+  }
+  require(ws.budget().temporal_slots >= T_slots, "workspace temporal slots insufficient");
   for (int j = 0; j < T_slots; ++j) {
     const auto& src = sources[j];
     require(src.width() == gx.length && src.height() == gy.length && dst.width() == gx.length &&

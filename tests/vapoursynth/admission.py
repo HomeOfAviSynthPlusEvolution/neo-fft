@@ -67,6 +67,15 @@ def main():
         c.neo_fft.DFTTest(src, tbsize=tbsize).get_frame(1)
         c.neo_fft.DFTTest(src, tbsize=tbsize).get_frame(src.num_frames - 1)
 
+    # Empty planes on temporal filter must strictly isolate and only request target frame
+    def only_frame_4(n, f):
+        if n != 4:
+            raise vs.Error("neighbor frame accessed")
+        return f
+    guarded_clip = c.std.ModifyFrame(src, clips=src, selector=only_frame_4)
+    c.neo_fft.DFTTest(guarded_clip, tbsize=5, planes=[]).get_frame(4)
+    fails(lambda: c.neo_fft.FFT3D(src, bt=5, bw=8, bh=8, sigma=1.1e18), 'finite')
+
     floatclip=c.std.BlankClip(width=128,height=96,format=vs.YUV444PS)
     def unusual(n,f):
         out=f.copy()

@@ -191,6 +191,33 @@ void temporal_plan_tests() {
     for (std::size_t i = 0; i < 256; ++i) {
       CHECK(out[i] == f1[i]);
     }
+
+    // Single-frame or mismatched frame count must be rejected for DFTTest with tbsize > 1
+    rejects([&] { plan.process(srcs[0], dst); });
+    rejects([&] { plan.process(span2d::Span<const span2d::Plane<const std::uint8_t>>(srcs, 2), dst); });
+
+    // FFT3D rejects mismatched frames, but allows exact bt or single frame fallback
+    {
+      FFT3DConfig fc;
+      fc.bw = 8;
+      fc.bh = 8;
+      fc.bt = 3;
+      Plan fplan(16, 16, {8, false, false}, fc);
+      fplan.process(srcs[0], dst); // 1 frame allowed
+      fplan.process(span2d::Span<const span2d::Plane<const std::uint8_t>>(srcs, 3), dst); // 3 frames allowed
+      rejects([&] { fplan.process(span2d::Span<const span2d::Plane<const std::uint8_t>>(srcs, 2), dst); });
+    }
+
+    // Excessive temporal noise overflow must be rejected at plan creation time
+    {
+      FFT3DConfig fc;
+      fc.bw = 8;
+      fc.bh = 8;
+      fc.bt = 5;
+      fc.sigma = 1.1e18f;
+      fc.degrid = 0;
+      rejects([&] { Plan fplan(16, 16, {8, false, false}, fc); });
+    }
   }
 }
 void filters() {

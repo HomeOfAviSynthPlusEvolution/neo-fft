@@ -24,6 +24,7 @@ struct Filter {
             "unsupported planar sample format");
     ds::validate_frame_dimensions(f, info.width, info.height);
     require(info.num_frames > 0, "clip frame count must be positive");
+    require(info.num_frames <= std::numeric_limits<int>::max() - 16, "clip frame count exceeds supported limit");
     Params params{*ctx.params};
     const auto config = [&] {
       if constexpr (A == Algorithm::FFT3D)
@@ -72,6 +73,15 @@ struct Filter {
     const auto& state = ctx.state<State>();
     const int n = ctx.output_frame;
     const int N = state.source.num_frames;
+
+    const bool has_active_plans = std::any_of(state.plans.begin(), state.plans.end(), [](const auto& p) {
+      return p != nullptr;
+    });
+    if (!has_active_plans) {
+      ctx.request_frame(0, n);
+      return ds::Result<ds::VideoRequestResult>::success({});
+    }
+
     if constexpr (A == Algorithm::FFT3D) {
       const int bt = state.temporal_size;
       const int left = bt / 2;
@@ -88,8 +98,8 @@ struct Filter {
       const int T = state.temporal_size;
       const int c = T / 2;
       for (int j = 0; j < T; ++j) {
-        const int nominal = n - c + j;
-        const int real = std::clamp(nominal, 0, N - 1);
+        const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
+                                   : ((n < c - j) ? 0 : (n - (c - j)));
         ctx.request_frame(0, real);
       }
     }
@@ -123,6 +133,28 @@ struct Filter {
     const int n = ctx.output_frame;
     const int N = state.source.num_frames;
 
+    const bool has_active_plans = std::any_of(state.plans.begin(), state.plans.end(), [](const auto& p) {
+      return p != nullptr;
+    });
+    if (!has_active_plans) {
+      auto holder = unwrap(ctx.frames.get(0, n));
+      require(holder.frame.format == state.source.format && ctx.dst.format == state.source.format &&
+                  holder.frame.plane_count == state.source.format.plane_count &&
+                  ctx.dst.plane_count == holder.frame.plane_count,
+              "frame format differs from plan");
+      for (int p = 0; p < ctx.dst.plane_count; ++p) {
+        const auto& s = holder.frame.plane(p);
+        const auto& d = ctx.dst.plane(p);
+        require(d.width == s.width && d.height == s.height, "frame plane dimensions differ from plan");
+        for (int y = 0; y < s.height; ++y) {
+          std::memcpy(static_cast<char*>(d.data) + y * d.stride_bytes,
+                      static_cast<const char*>(s.data) + y * s.stride_bytes,
+                      std::size_t(s.width) * ds::bytes_per_sample(state.source.format.sample_format));
+        }
+      }
+      return ds::Result<ds::VideoProcessResult>::success({});
+    }
+
     int T = 1;
     int c = 0;
     std::vector<ds::RequestedVideoFrame> frames_holder;
@@ -144,8 +176,8 @@ struct Filter {
       c = T / 2;
       frames_holder.reserve(T);
       for (int j = 0; j < T; ++j) {
-        const int nominal = n - c + j;
-        const int real = std::clamp(nominal, 0, N - 1);
+        const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
+                                   : ((n < c - j) ? 0 : (n - (c - j)));
         frames_holder.push_back(unwrap(ctx.frames.get(0, real)));
       }
     }
