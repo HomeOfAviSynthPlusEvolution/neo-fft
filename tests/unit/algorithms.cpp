@@ -56,6 +56,23 @@ void windows() {
   c.overlap = 0;
   c.swin = 6;
   rejects([&] { Plan p(64, 48, {8, false, false}, c); });
+
+  // 3D DFT window tests
+  {
+    auto w3d = dft_window_3d(3, 2, 1, 1, 7, 7, 2.5f, 2.5f);
+    check_near(w3d.wscale, 4.0f, 1e-6);
+
+    auto w3d_hann = dft_window_3d(3, 2, 1, 1, 7, 0, 2.5f, 2.5f);
+    check_near(w3d_hann.wscale, 32.0f / 3.0f, 1e-4);
+
+    auto w1d = dft_window_3d(1, 2, 1, 1, 7, 7, 2.5f, 2.5f);
+    check_near(w1d.wscale, 4.0f, 1e-6);
+
+    // Window 6 (flat top) non-unit center gain
+    auto w3d_flat = dft_window_3d(3, 2, 1, 1, 7, 6, 2.5f, 2.5f);
+    const double tw_c = 0.2810639 + 0.5208972 + 0.1980399; // 1.000001
+    check_near(tw_c, 1.000001, 1e-7);
+  }
 }
 void filters() {
   std::complex<float> x{10, 0};

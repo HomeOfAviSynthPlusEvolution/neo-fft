@@ -12,4 +12,5 @@ struct DftWindow {
   float wscale;
 };
 DftWindow dft_window(int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta);
+DftWindow dft_window_3d(int tbsize, int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta);
 } // namespace neo_fft
