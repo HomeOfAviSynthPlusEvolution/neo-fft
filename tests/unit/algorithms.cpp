@@ -171,6 +171,35 @@ void identity(SampleFormat format) {
       CHECK(job.get() == first);
   }
 }
+
+void multithreaded_size_switching() {
+  const std::vector<int> sizes = {8, 12, 16, 20, 24, 32, 40, 48, 64};
+  std::vector<std::future<void>> futures;
+  for (int t = 0; t < 4; ++t) {
+    futures.emplace_back(std::async(std::launch::async, [&sizes, t] {
+      for (int iter = 0; iter < 30; ++iter) {
+        for (int b : sizes) {
+          FFT3DConfig cfg;
+          cfg.bh = b;
+          cfg.bw = b;
+          cfg.oh = b / 2;
+          cfg.ow = b / 2;
+          cfg.sigma = 2.0f;
+          Plan plan(128, 128, {8, false, false}, cfg);
+          auto src_buf = buffer<std::uint8_t>(128 * 128);
+          std::fill(src_buf.begin(), src_buf.end(), std::uint8_t((t + iter + b) % 256));
+          auto dst_buf = buffer<std::uint8_t>(128 * 128);
+          plan.process(checked_plane(src_buf.data(), 128, 128, 128, 128 * 128),
+                       checked_plane(dst_buf.data(), 128, 128, 128, 128 * 128));
+        }
+      }
+    }));
+  }
+  for (auto& f : futures) {
+    f.get();
+  }
+}
+
 int main() {
   try {
     windows();
@@ -179,6 +208,7 @@ int main() {
     identity<std::uint16_t>({10, false, true});
     identity<std::uint16_t>({16, false, false});
     identity<float>({32, true, true});
+    multithreaded_size_switching();
     std::cout << "algorithms: geometry, windows, spectral branches, reconstruction, concurrency passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

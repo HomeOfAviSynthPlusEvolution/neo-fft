@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 #if defined(_WIN32)
@@ -88,6 +89,10 @@ public:
     std::free(ptr);
   }
 
+  bool is_active() const noexcept {
+    return active_;
+  }
+
   void set_active(bool active) noexcept {
     active_ = active;
   }
@@ -135,6 +140,21 @@ public:
   ScratchScope(const ScratchScope&) = delete;
   ScratchScope& operator=(const ScratchScope&) = delete;
 };
+
+class SuspendScratchScope {
+public:
+  SuspendScratchScope() noexcept : prev_(g_scratch_pool.is_active()) {
+    g_scratch_pool.set_active(false);
+  }
+  ~SuspendScratchScope() noexcept {
+    g_scratch_pool.set_active(prev_);
+  }
+  SuspendScratchScope(const SuspendScratchScope&) = delete;
+  SuspendScratchScope& operator=(const SuspendScratchScope&) = delete;
+
+private:
+  bool prev_;
+};
 } // namespace
 
 // Built multiple times with separate dependency namespaces. No shared
@@ -171,6 +191,50 @@ public:
 #include <pocketfft_hdronly.h>
 #undef malloc
 #undef free
+
+namespace POCKETFFT_NAMESPACE::detail {
+
+template <typename T>
+inline std::shared_ptr<T> get_plan_persistent(size_t length) {
+  static std::mutex mut;
+  static std::unordered_map<size_t, std::shared_ptr<T>> cache;
+  {
+    std::lock_guard<std::mutex> lock(mut);
+    auto it = cache.find(length);
+    if (it != cache.end()) {
+      return it->second;
+    }
+  }
+  SuspendScratchScope suspend;
+  auto plan = std::make_shared<T>(length);
+  {
+    std::lock_guard<std::mutex> lock(mut);
+    cache.emplace(length, plan);
+  }
+  return plan;
+}
+
+template <>
+inline std::shared_ptr<pocketfft_r<float>> get_plan<pocketfft_r<float>>(size_t length) {
+  return get_plan_persistent<pocketfft_r<float>>(length);
+}
+
+template <>
+inline std::shared_ptr<pocketfft_c<float>> get_plan<pocketfft_c<float>>(size_t length) {
+  return get_plan_persistent<pocketfft_c<float>>(length);
+}
+
+template <>
+inline std::shared_ptr<pocketfft_r<double>> get_plan<pocketfft_r<double>>(size_t length) {
+  return get_plan_persistent<pocketfft_r<double>>(length);
+}
+
+template <>
+inline std::shared_ptr<pocketfft_c<double>> get_plan<pocketfft_c<double>>(size_t length) {
+  return get_plan_persistent<pocketfft_c<double>>(length);
+}
+
+} // namespace POCKETFFT_NAMESPACE::detail
 
 namespace neo_fft::detail {
 namespace {
