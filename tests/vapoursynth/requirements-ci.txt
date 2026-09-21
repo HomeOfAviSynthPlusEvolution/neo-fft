@@ -1,0 +1,3 @@
+# Official Windows x64 wheel; host only, no reference FFT plugin.
+vapoursynth==79 --hash=sha256:643d9708df7e98807a66d4e8804e2e9a1380af22bea2873387d8af103e69aa5b
+numpy==2.1.3 --hash=sha256:0d30c543f02e84e92c4b1f415b7c6b5326cbe45ee7882b6b77db7195fb971e3a

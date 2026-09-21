@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spec:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64 / MSVC
+            os: windows-2022
+            arch: x64
+            build_type: Release
+          - name: Linux x64 / GCC
+            os: ubuntu-24.04
+            arch: x64
+            cc: gcc-13
+            cxx: g++-13
+            packages: ninja-build g++-13
+            build_type: Release
+            plugin: 'ON'
+            cxx_flags: ''
+          - name: Linux x64 / Clang / ASan + UBSan
+            os: ubuntu-24.04
+            arch: x64
+            cc: clang-18
+            cxx: clang++-18
+            packages: ninja-build clang-18 libclang-rt-18-dev
+            build_type: RelWithDebInfo
+            plugin: 'OFF'
+            cxx_flags: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          - name: macOS ARM64 / Apple Clang
+            os: macos-15
+            arch: arm64
+            cc: /usr/bin/clang
+            cxx: /usr/bin/clang++
+            build_type: Release
+            plugin: 'ON'
+            cxx_flags: ''
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        id: python
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.arch }}
+
+      - name: Verify runner architecture
+        shell: python
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          import os
+          import platform
+          expected = {"x64": {"amd64", "x86_64"}, "arm64": {"arm64", "aarch64"}}
+          actual = platform.machine().lower()
+          print(f"Runner architecture: {actual}")
+          assert actual in expected[os.environ["EXPECTED_ARCH"]], "Unexpected runner architecture"
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.packages }}
+
+      - name: Install VapourSynth host (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r tests/vapoursynth/requirements-ci.txt
+
+      - name: Configure VapourSynth Python paths (Windows)
+        if: runner.os == 'Windows'
+        run: vapoursynth config
+
+      - name: Verify VapourSynth host (Windows)
+        if: runner.os == 'Windows'
+        run: vspipe --version
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          cmake -S . -B build/ci -G "Visual Studio 17 2022" -A x64
+          -DBUILD_TESTING=ON
+          -DNEO_FFT_ENABLE_SIMD=ON
+          -DNEO_FFT_BUILD_VAPOURSYNTH=ON -DNEO_FFT_TEST_VAPOURSYNTH=ON
+          "-DPython3_EXECUTABLE=${{ steps.python.outputs.python-path }}"
+
+      - name: Configure (Linux and macOS)
+        if: runner.os != 'Windows'
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          NEO_CXX_FLAGS: ${{ matrix.cxx_flags }}
+          NEO_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: >-
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          "-DCMAKE_CXX_FLAGS=$NEO_CXX_FLAGS"
+          -DBUILD_TESTING=ON
+          -DNEO_FFT_ENABLE_SIMD=ON
+          -DNEO_FFT_BUILD_VAPOURSYNTH=${{ matrix.plugin }} -DNEO_FFT_TEST_VAPOURSYNTH=OFF
+          "-DPython3_EXECUTABLE=$NEO_PYTHON"
+
+      - name: Build
+        run: cmake --build build/ci --config ${{ matrix.build_type }} --parallel 4
+
+      # Verbose output records every Highway target actually exercised on the CPU.
+      - name: Test specifications and SIMD equivalence
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >-
+          ctest --test-dir build/ci -C ${{ matrix.build_type }} -L spec
+          --verbose --output-on-failure --no-tests=error --parallel 4
