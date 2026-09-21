@@ -191,6 +191,52 @@ int main() {
     }
     {
       RealFFT fft8(8, 8);
+      CHECK(fft8.columns() == 5);
+
+      // 1. 64 unit delta impulses against independent double-precision direct_dft
+      for (int py = 0; py < 8; ++py) {
+        for (int px = 0; px < 8; ++px) {
+          float in[64]{};
+          in[py * 8 + px] = 1.0f;
+          std::complex<float> spec[8 * 5]{};
+          fft8.forward(in, spec);
+          const auto oracle = direct_dft(in, 8, 8, 8);
+          for (int i = 0; i < 8 * 5; ++i) {
+            check_near(spec[i].real(), oracle[i].real(), 5e-6);
+            check_near(spec[i].imag(), oracle[i].imag(), 5e-6);
+          }
+        }
+      }
+
+      // Random block test against direct_dft
+      float rnd_in[64];
+      for (int i = 0; i < 64; ++i) {
+        rnd_in[i] = float((i * 31 + 17) % 97 - 48) / 25.0f;
+      }
+      std::complex<float> rnd_spec[8 * 5]{};
+      fft8.forward(rnd_in, rnd_spec);
+      const auto oracle_rnd = direct_dft(rnd_in, 8, 8, 8);
+      for (int i = 0; i < 8 * 5; ++i) {
+        check_near(rnd_spec[i].real(), oracle_rnd[i].real(), 1e-5);
+        check_near(rnd_spec[i].imag(), oracle_rnd[i].imag(), 1e-5);
+      }
+
+      // 2. Cross inverse transform test (PocketFFT scalar forward -> Codelet inverse)
+      {
+        RealFFT fft_scalar(8, 8, FftProfile::scalar);
+        float orig[64], restored[64]{};
+        for (int i = 0; i < 64; ++i) {
+          orig[i] = float((i * 37 + 19) % 256 - 128) / 32.0f;
+        }
+        std::complex<float> scalar_spec[8 * 5]{};
+        fft_scalar.forward(orig, scalar_spec);
+
+        fft8.inverse(scalar_spec, restored);
+        for (int i = 0; i < 64; ++i) {
+          check_near(restored[i], orig[i], 1e-6);
+        }
+      }
+
       for (int rs : {8, 12, 16, 24}) {
         for (int ss : {5, 8, 12}) {
           for (std::size_t active : {0, 1, 7, 8, 9, 16, 32, 64}) {

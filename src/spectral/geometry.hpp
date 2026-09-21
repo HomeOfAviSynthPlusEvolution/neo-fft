@@ -4,7 +4,7 @@
 
 namespace neo_fft {
 struct Axis {
-  int length, block, overlap, step, count, cover, offset;
+  int length = 0, block = 0, overlap = 0, step = 0, count = 0, cover = 0, offset = 0;
 };
 inline Axis admit(Axis a) {
   require(a.offset >= 0 && a.cover >= std::int64_t(a.offset) + a.length && a.offset < a.length &&

@@ -176,12 +176,21 @@ int main() {
       std::vector<std::uint8_t> src_data{10, 20, 30, 40};
       span2d::Plane<std::uint8_t> src_plane(src_data.data(), 4, 1, 4);
 
-      Axis ax;
-      ax.offset = 2;
+      Axis ax{};
+      ax.length = 4;
+      ax.block = 1;
+      ax.step = 1;
+      ax.count = 4;
       ax.cover = 8;
-      Axis ay;
-      ay.offset = 0;
+      ax.offset = 2;
+
+      Axis ay{};
+      ay.length = 1;
+      ay.block = 1;
+      ay.step = 1;
+      ay.count = 1;
       ay.cover = 1;
+      ay.offset = 0;
       Geometry geom(ax, ay);
 
       RealFFT dummy_fft(8, 1);
@@ -220,8 +229,21 @@ int main() {
       };
       span2d::Plane<std::uint8_t> src_plane(src_data.data(), 3, 3, 3);
       // d_x=1, d_y=1, P_x=5, P_y=5
-      Axis ax; ax.offset = 1; ax.cover = 5;
-      Axis ay; ay.offset = 1; ay.cover = 5;
+      Axis ax{};
+      ax.length = 3;
+      ax.block = 1;
+      ax.step = 1;
+      ax.count = 3;
+      ax.cover = 5;
+      ax.offset = 1;
+
+      Axis ay{};
+      ay.length = 3;
+      ay.block = 1;
+      ay.step = 1;
+      ay.count = 3;
+      ay.cover = 5;
+      ay.offset = 1;
       Geometry geom(ax, ay);
 
       RealFFT dummy_fft(32, 32);

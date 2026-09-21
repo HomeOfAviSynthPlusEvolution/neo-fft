@@ -29,11 +29,12 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
         } else if (std::abs(p.exponent - .5f) < 0.00005f) {
           return hn::Sqrt(g);
         } else {
-          HWY_ALIGN float values[hn::MaxLanes(d)];
-          hn::Store(g, d, values);
+          constexpr hn::ScalableTag<float> df;
+          HWY_ALIGN float values[hn::MaxLanes(df)];
+          hn::Store(g, df, values);
           for (std::size_t i = 0; i < lanes; ++i)
             values[i] = std::pow(values[i], p.exponent);
-          return hn::Load(d, values);
+          return hn::Load(df, values);
         }
       }
       case 1:
