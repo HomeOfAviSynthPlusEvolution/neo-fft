@@ -29,4 +29,31 @@ private:
   FftProfile profile_;
   const FftBackend& backend_;
 };
+
+class RealFFT3D {
+public:
+  RealFFT3D(int depth, int height, int width, FftProfile profile = FftProfile::native);
+  int depth() const { return depth_; }
+  int height() const { return height_; }
+  int width() const { return width_; }
+  int columns() const { return width_ / 2 + 1; }
+  std::size_t samples() const { return std::size_t(depth_) * height_ * width_; }
+  std::size_t bins() const { return std::size_t(depth_) * height_ * columns(); }
+  FftProfile profile() const { return profile_; }
+  int lanes() const { return backend_.lanes; }
+  const char* backend_name() const { return backend_.name; }
+
+  void forward(const float* in, std::complex<float>* out) const;
+  void inverse(const std::complex<float>* in, float* out) const;
+
+  void forward(const float* in, std::size_t batch, std::size_t in_dist,
+               std::complex<float>* out, std::size_t out_dist) const;
+  void inverse(const std::complex<float>* in, std::size_t batch, std::size_t in_dist,
+               float* out, std::size_t out_dist) const;
+
+private:
+  int depth_, height_, width_;
+  FftProfile profile_;
+  const FftBackend& backend_;
+};
 } // namespace neo_fft

@@ -361,10 +361,77 @@ void batch_c2r(std::size_t batch, int height, int width, const std::complex<floa
                         std::ptrdiff_t(in_row_stride * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
+
+inline void ensure_plans_3d(int depth, int height, int width) {
+  ensure_plans(height, width);
+  pf::detail::get_plan<pf::detail::pocketfft_r<float>>(std::size_t(depth));
+  pf::detail::get_plan<pf::detail::pocketfft_c<float>>(std::size_t(depth));
+}
+
+void r2c_3d(int depth, int height, int width, const float* in, std::complex<float>* out) {
+  ensure_plans_3d(depth, height, width);
+  ScratchScope scope;
+  const int k = width / 2 + 1;
+  const pf::shape_t shape{std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{0, 1, 2};
+  const pf::stride_t rs{std::ptrdiff_t(height * width * sizeof(float)), std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
+  const pf::stride_t ss{std::ptrdiff_t(height * k * sizeof(std::complex<float>)), std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+  pf::r2c(shape, rs, ss, axes, true, in, out, 1.0f, 1);
+}
+
+void c2r_3d(int depth, int height, int width, const std::complex<float>* in, float* out, float fct) {
+  ensure_plans_3d(depth, height, width);
+  ScratchScope scope;
+  const int k = width / 2 + 1;
+  const pf::shape_t shape{std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{0, 1, 2};
+  const pf::stride_t rs{std::ptrdiff_t(height * width * sizeof(float)), std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
+  const pf::stride_t ss{std::ptrdiff_t(height * k * sizeof(std::complex<float>)), std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+  pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
+}
+
+void batch_r2c_3d(std::size_t batch, int depth, int height, int width, const float* in, std::size_t in_dist,
+                  std::complex<float>* out, std::size_t out_dist) {
+  if (batch == 0)
+    return;
+  if (batch == 1) {
+    r2c_3d(depth, height, width, in, out);
+    return;
+  }
+  ensure_plans_3d(depth, height, width);
+  ScratchScope scope;
+  const int k = width / 2 + 1;
+  const pf::shape_t shape{batch, std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{1, 2, 3};
+  const pf::stride_t rs{std::ptrdiff_t(in_dist * sizeof(float)), std::ptrdiff_t(height * width * sizeof(float)),
+                        std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
+  const pf::stride_t ss{std::ptrdiff_t(out_dist * sizeof(std::complex<float>)),
+                        std::ptrdiff_t(height * k * sizeof(std::complex<float>)),
+                        std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+  pf::r2c(shape, rs, ss, axes, true, in, out, 1.0f, 1);
+}
+
+void batch_c2r_3d(std::size_t batch, int depth, int height, int width, const std::complex<float>* in, std::size_t in_dist,
+                  float* out, std::size_t out_dist, float fct) {
+  if (batch == 0)
+    return;
+  if (batch == 1) {
+    c2r_3d(depth, height, width, in, out, fct);
+    return;
+  }
+  ensure_plans_3d(depth, height, width);
+  ScratchScope scope;
+  const int k = width / 2 + 1;
+  const pf::shape_t shape{batch, std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{1, 2, 3};
+  const pf::stride_t rs{std::ptrdiff_t(out_dist * sizeof(float)), std::ptrdiff_t(height * width * sizeof(float)),
+                        std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
+  const pf::stride_t ss{std::ptrdiff_t(in_dist * sizeof(std::complex<float>)),
+                        std::ptrdiff_t(height * k * sizeof(std::complex<float>)),
+                        std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+  pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
+}
 } // namespace
 
 const FftBackend& BACKEND_FN() noexcept {
-  static const FftBackend backend{int(pf::detail::VLEN<float>::val), BACKEND_NAME, r2c, c2r, batch_r2c, batch_c2r};
+  static const FftBackend backend{int(pf::detail::VLEN<float>::val), BACKEND_NAME, r2c, c2r, batch_r2c, batch_c2r,
+                                  r2c_3d, c2r_3d, batch_r2c_3d, batch_c2r_3d};
   return backend;
 }
 

@@ -393,6 +393,93 @@ int main() {
       }
     }
 
+    // 3D Real FFT test
+    for (int d : {1, 3}) {
+      for (int h : {2, 3}) {
+        for (int w : {2, 4, 5}) {
+          RealFFT3D fft3d(d, h, w);
+          CHECK(fft3d.depth() == d);
+          CHECK(fft3d.height() == h);
+          CHECK(fft3d.width() == w);
+          CHECK(fft3d.columns() == w / 2 + 1);
+          CHECK(fft3d.samples() == std::size_t(d) * h * w);
+          CHECK(fft3d.bins() == std::size_t(d) * h * (w / 2 + 1));
+
+          const std::size_t n_samples = fft3d.samples();
+          const std::size_t n_bins = fft3d.bins();
+          std::vector<float> in(n_samples), out(n_samples, -999.0f);
+          std::vector<std::complex<float>> spec(n_bins);
+
+          for (std::size_t i = 0; i < n_samples; ++i) {
+            in[i] = float(int(i * 17 + 3) % 23 - 11) / 8.0f;
+          }
+
+          fft3d.forward(in.data(), spec.data());
+          fft3d.inverse(spec.data(), out.data());
+
+          const auto oracle = direct_dft_3d(in.data(), d, h, w);
+          double spatial_energy = 0, spectral_energy = 0;
+          const int k = w / 2 + 1;
+          for (std::size_t i = 0; i < n_samples; ++i) {
+            spatial_energy += double(in[i]) * in[i];
+          }
+          for (int kz = 0; kz < d; ++kz) {
+            for (int ky = 0; ky < h; ++ky) {
+              for (int kx = 0; kx < k; ++kx) {
+                const auto idx = (kz * h + ky) * k + kx;
+                check_near(spec[idx].real(), oracle[idx].real(), 5e-5);
+                check_near(spec[idx].imag(), oracle[idx].imag(), 5e-5);
+                const double weight = (kx == 0 || (w % 2 == 0 && kx == w / 2)) ? 1.0 : 2.0;
+                spectral_energy += std::norm(std::complex<double>(spec[idx])) * weight;
+              }
+            }
+          }
+          check_near(spatial_energy, spectral_energy / double(n_samples), 5e-5);
+          for (std::size_t i = 0; i < n_samples; ++i) {
+            check_near(out[i], in[i], 5e-5);
+          }
+        }
+      }
+    }
+
+    // 3D impulse & constant checks
+    {
+      const int T = 3, H = 2, W = 4;
+      RealFFT3D fft3d(T, H, W);
+      const auto n_samples = fft3d.samples();
+      const auto n_bins = fft3d.bins();
+      const int K = fft3d.columns();
+
+      // Unit impulse at z=1, y=0, x=0
+      std::vector<float> impulse(n_samples, 0.0f);
+      impulse[(1 * H + 0) * W + 0] = 1.0f;
+      std::vector<std::complex<float>> spec(n_bins);
+      fft3d.forward(impulse.data(), spec.data());
+
+      const double pi = std::acos(-1.0);
+      for (int kt = 0; kt < T; ++kt) {
+        const double expected_angle = -2 * pi * double(kt) / double(T);
+        for (int ky = 0; ky < H; ++ky) {
+          for (int kx = 0; kx < K; ++kx) {
+            const auto idx = (kt * H + ky) * K + kx;
+            check_near(spec[idx].real(), float(std::cos(expected_angle)), 5e-5);
+            check_near(spec[idx].imag(), float(std::sin(expected_angle)), 5e-5);
+          }
+        }
+      }
+
+      // Constant q
+      const float q = 3.5f;
+      std::vector<float> constant_in(n_samples, q), back(n_samples, 0.0f);
+      fft3d.forward(constant_in.data(), spec.data());
+      check_near(spec[0].real(), float(n_samples) * q, 5e-5);
+      check_near(spec[0].imag(), 0.0f, 5e-5);
+      fft3d.inverse(spec.data(), back.data());
+      for (float v : back) {
+        check_near(v, q, 5e-5);
+      }
+    }
+
     std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, 8x8, 16x16, 32x32 codelets, "
                  "multi-target PocketFFT profiles passed\n";
   } catch (const std::exception& e) {

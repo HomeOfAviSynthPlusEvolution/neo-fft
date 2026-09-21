@@ -15,3 +15,20 @@ inline std::vector<std::complex<double>> direct_dft(const float* p, int h, int w
         }
   return out;
 }
+
+inline std::vector<std::complex<double>> direct_dft_3d(const float* p, int d, int h, int w) {
+  const int k = w / 2 + 1;
+  std::vector<std::complex<double>> out(d * h * k);
+  const double pi = std::acos(-1.0);
+  for (int kz = 0; kz < d; ++kz)
+    for (int ky = 0; ky < h; ++ky)
+      for (int kx = 0; kx <= w / 2; ++kx)
+        for (int z = 0; z < d; ++z)
+          for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+              const double angle = -2 * pi * (double(kz) * z / d + double(ky) * y / h + double(kx) * x / w);
+              out[(kz * h + ky) * k + kx] +=
+                  double(p[(z * h + y) * w + x]) * std::complex<double>(std::cos(angle), std::sin(angle));
+            }
+  return out;
+}

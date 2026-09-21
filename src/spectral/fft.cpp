@@ -129,4 +129,31 @@ void RealFFT::forward(const float* in, std::complex<float>* out) const {
 void RealFFT::inverse(const std::complex<float>* in, float* out) const {
   inverse(in, {std::size_t(columns()), bins(), 1, 1}, out, {std::size_t(width_), samples(), 1, 1});
 }
+
+RealFFT3D::RealFFT3D(int depth, int height, int width, FftProfile profile)
+    : depth_(dimension(depth)), height_(dimension(height)), width_(dimension(width)),
+      profile_(profile), backend_(backend_by_profile(profile)) {
+  require(fft_profile_supported(profile), "FFT profile is not supported by current CPU");
+  plane_extent<float>(width_, height_ * depth_, static_cast<std::ptrdiff_t>(mul_size(width_, sizeof(float))));
+}
+
+void RealFFT3D::forward(const float* in, std::complex<float>* out) const {
+  backend_.r2c_3d(depth_, height_, width_, in, out);
+}
+
+void RealFFT3D::inverse(const std::complex<float>* in, float* out) const {
+  const float scale = 1.0f / (float(depth_) * float(height_) * float(width_));
+  backend_.c2r_3d(depth_, height_, width_, in, out, scale);
+}
+
+void RealFFT3D::forward(const float* in, std::size_t batch, std::size_t in_dist,
+                        std::complex<float>* out, std::size_t out_dist) const {
+  backend_.batch_r2c_3d(batch, depth_, height_, width_, in, in_dist, out, out_dist);
+}
+
+void RealFFT3D::inverse(const std::complex<float>* in, std::size_t batch, std::size_t in_dist,
+                        float* out, std::size_t out_dist) const {
+  const float scale = 1.0f / (float(depth_) * float(height_) * float(width_));
+  backend_.batch_c2r_3d(batch, depth_, height_, width_, in, in_dist, out, out_dist, scale);
+}
 } // namespace neo_fft
