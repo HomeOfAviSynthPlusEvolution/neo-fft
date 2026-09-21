@@ -1,5 +1,7 @@
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
+#include "algorithms/pad.hpp"
+#include "algorithms/plan.hpp"
 #include "../test.hpp"
 #include <atomic>
 #include <chrono>
@@ -153,6 +155,80 @@ int main() {
     l1.reset();
     CHECK(future_l3.get() == true);
     CHECK(acquired_l3.load() == true);
+
+    // 6. pad_source 1D/2D Mirroring Tests
+    // 1D logic match for docs/specs/phase-1/kernel-plane-geometry.md line 51:
+    // [10, 20, 30, 40], d=2, P=8 => [30, 20, 10, 20, 30, 40, 30, 20]
+    {
+      std::vector<std::uint8_t> src_data{10, 20, 30, 40};
+      span2d::Plane<std::uint8_t> src_plane(src_data.data(), 4, 1, 4);
+
+      Axis ax;
+      ax.offset = 2;
+      ax.cover = 8;
+      Axis ay;
+      ay.offset = 0;
+      ay.cover = 1;
+      Geometry geom(ax, ay);
+
+      RealFFT dummy_fft(8, 1);
+      auto pbudget = make_workspace_budget(geom, dummy_fft, false, 1);
+      Workspace pws(pbudget);
+
+      SampleFormat fmt{8, false, false}; // not floating, not chroma, 8-bit
+      // For DFTTest, scale = 1.0f / float(1 << 0) = 1.0f. So no scaling applied effectively.
+      pad_source(span2d::Plane<const std::uint8_t>(src_plane.data(), src_plane.width(), src_plane.height(), src_plane.stride()), pws.padded(), geom, fmt, Algorithm::DFTTest);
+
+      auto padded = pws.padded();
+      CHECK(padded(0, 0) == 30.0f);
+      CHECK(padded(0, 1) == 20.0f);
+      CHECK(padded(0, 2) == 10.0f);
+      CHECK(padded(0, 3) == 20.0f);
+      CHECK(padded(0, 4) == 30.0f);
+      CHECK(padded(0, 5) == 40.0f);
+      CHECK(padded(0, 6) == 30.0f);
+      CHECK(padded(0, 7) == 20.0f);
+
+      // Verify 64-byte alignment
+      CHECK(reinterpret_cast<std::uintptr_t>(padded.data()) % 64 == 0);
+      CHECK(reinterpret_cast<std::uintptr_t>(padded.row_ptr(0)) % 64 == 0);
+    }
+
+    // 2D Corner/Edge Tests
+    {
+      // 3x3 source
+      // 1 2 3
+      // 4 5 6
+      // 7 8 9
+      std::vector<std::uint8_t> src_data{
+        1, 2, 3,
+        4, 5, 6,
+        7, 8, 9
+      };
+      span2d::Plane<std::uint8_t> src_plane(src_data.data(), 3, 3, 3);
+      // d_x=1, d_y=1, P_x=5, P_y=5
+      Axis ax; ax.offset = 1; ax.cover = 5;
+      Axis ay; ay.offset = 1; ay.cover = 5;
+      Geometry geom(ax, ay);
+
+      RealFFT dummy_fft(32, 32);
+      Workspace pws(make_workspace_budget(geom, dummy_fft, false, 1));
+      SampleFormat fmt{8, false, false};
+      pad_source(span2d::Plane<const std::uint8_t>(src_plane.data(), src_plane.width(), src_plane.height(), src_plane.stride()), pws.padded(), geom, fmt, Algorithm::DFTTest);
+
+      auto padded = pws.padded();
+      // Expect:
+      // 5 4 5 6 5
+      // 2 1 2 3 2
+      // 5 4 5 6 5
+      // 8 7 8 9 8
+      // 5 4 5 6 5
+      CHECK(padded(0, 0) == 5.0f); CHECK(padded(0, 1) == 4.0f); CHECK(padded(0, 2) == 5.0f); CHECK(padded(0, 3) == 6.0f); CHECK(padded(0, 4) == 5.0f);
+      CHECK(padded(1, 0) == 2.0f); CHECK(padded(1, 1) == 1.0f); CHECK(padded(1, 2) == 2.0f); CHECK(padded(1, 3) == 3.0f); CHECK(padded(1, 4) == 2.0f);
+      CHECK(padded(2, 0) == 5.0f); CHECK(padded(2, 1) == 4.0f); CHECK(padded(2, 2) == 5.0f); CHECK(padded(2, 3) == 6.0f); CHECK(padded(2, 4) == 5.0f);
+      CHECK(padded(3, 0) == 8.0f); CHECK(padded(3, 1) == 7.0f); CHECK(padded(3, 2) == 8.0f); CHECK(padded(3, 3) == 9.0f); CHECK(padded(3, 4) == 8.0f);
+      CHECK(padded(4, 0) == 5.0f); CHECK(padded(4, 1) == 4.0f); CHECK(padded(4, 2) == 5.0f); CHECK(padded(4, 3) == 6.0f); CHECK(padded(4, 4) == 5.0f);
+    }
 
     std::cout << "workspace unit tests passed successfully.\n";
     return 0;

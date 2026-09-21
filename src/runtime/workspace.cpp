@@ -19,6 +19,14 @@ WorkspaceBudget make_workspace_budget(const Geometry& geom, const RealFFT& fft, 
       align_up(mul_size(static_cast<std::size_t>(b.accum_stride_bytes), static_cast<std::size_t>(b.accum_height)),
                kSimdAlignment);
 
+  b.padded_width = geom.x.cover;
+  b.padded_height = geom.y.cover;
+  b.padded_stride_bytes = static_cast<std::ptrdiff_t>(
+      align_up(mul_size(static_cast<std::size_t>(b.padded_width), sizeof(float)), kSimdAlignment));
+  b.padded_bytes =
+      align_up(mul_size(static_cast<std::size_t>(b.padded_stride_bytes), static_cast<std::size_t>(b.padded_height)),
+               kSimdAlignment);
+
   std::size_t row_bytes = 0;
   if (has_row_buffer) {
     b.row_width = geom.x.cover;
@@ -38,7 +46,8 @@ WorkspaceBudget make_workspace_budget(const Geometry& geom, const RealFFT& fft, 
       mul_size(mul_size(static_cast<std::size_t>(batch_size), b.bins), sizeof(std::complex<float>)), kSimdAlignment);
 
   b.accum_offset = 0;
-  b.row_offset = b.accum_offset + accum_bytes;
+  b.padded_offset = b.accum_offset + accum_bytes;
+  b.row_offset = b.padded_offset + b.padded_bytes;
   b.block_offset = b.row_offset + row_bytes;
   b.inverse_offset = b.block_offset + block_bytes;
   b.spectrum_offset = b.inverse_offset + inverse_bytes;
@@ -54,6 +63,7 @@ Workspace::Workspace(const WorkspaceBudget& budget)
   auto* base = reinterpret_cast<std::byte*>(aligned);
 
   accum_ptr_ = reinterpret_cast<float*>(base + budget_.accum_offset);
+  padded_ptr_ = reinterpret_cast<float*>(base + budget_.padded_offset);
   if (budget_.row_height > 0) {
     row_ptr_ = reinterpret_cast<float*>(base + budget_.row_offset);
   }

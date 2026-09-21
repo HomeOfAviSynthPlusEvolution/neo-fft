@@ -21,6 +21,10 @@ struct WorkspaceBudget {
   int accum_height = 0;
   std::ptrdiff_t accum_stride_bytes = 0;
 
+  int padded_width = 0;
+  int padded_height = 0;
+  std::ptrdiff_t padded_stride_bytes = 0;
+
   int row_width = 0;
   int row_height = 0;
   std::ptrdiff_t row_stride_bytes = 0;
@@ -30,10 +34,12 @@ struct WorkspaceBudget {
   int batch_size = 1;
 
   std::size_t accum_offset = 0;
+  std::size_t padded_offset = 0;
   std::size_t row_offset = 0;
   std::size_t block_offset = 0;
   std::size_t inverse_offset = 0;
   std::size_t spectrum_offset = 0;
+  std::size_t padded_bytes = 0;
   std::size_t total_bytes = 0;
 };
 
@@ -56,6 +62,10 @@ public:
     return span2d::Plane<float>(accum_ptr_, budget_.accum_width, budget_.accum_height, budget_.accum_stride_bytes);
   }
 
+  span2d::Plane<float> padded() const noexcept {
+    return span2d::Plane<float>(padded_ptr_, budget_.padded_width, budget_.padded_height, budget_.padded_stride_bytes);
+  }
+
   span2d::Plane<float> row() const noexcept {
     return span2d::Plane<float>(row_ptr_, budget_.row_width, budget_.row_height, budget_.row_stride_bytes);
   }
@@ -75,6 +85,7 @@ public:
 
   // Restrict views for compiler vectorization without aliasing overhead
   span2d::RestrictPlane<float> accum_restrict() const noexcept { return accum().as_restrict(); }
+  span2d::RestrictPlane<float> padded_restrict() const noexcept { return padded().as_restrict(); }
   span2d::RestrictPlane<float> row_restrict() const noexcept { return row().as_restrict(); }
   span2d::RestrictSpan<float> block_restrict(int batch_index = 0) const noexcept {
     return block(batch_index).as_restrict();
@@ -90,6 +101,7 @@ private:
   WorkspaceBudget budget_;
   std::vector<std::byte> storage_;
   float* accum_ptr_ = nullptr;
+  float* padded_ptr_ = nullptr;
   float* row_ptr_ = nullptr;
   float* block_ptr_ = nullptr;
   float* inverse_ptr_ = nullptr;
