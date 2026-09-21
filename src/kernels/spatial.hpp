@@ -1,0 +1,33 @@
+#pragma once
+#include <cstddef>
+#include <cstdint>
+
+namespace neo_fft {
+
+using GatherFft3dFn = void (*)(const float* src, const float* wx_a, float wy, float* blk, int count) noexcept;
+using GatherDfttestFn = void (*)(const float* src, const float* h_row, float* blk, int count) noexcept;
+using ScatterFft3dBlockFn = void (*)(const float* inv, const float* wx_s, float* r_row, int count) noexcept;
+using ScatterFft3dRowFn = void (*)(const float* r_ptr, float wy, float* a_ptr, int count) noexcept;
+using ScatterDfttestFn = void (*)(const float* inv, const float* h_syn, float* acc_row, int count) noexcept;
+using StoreOutputFloatFn = void (*)(const float* a_ptr, float* dst_row, int count, bool fft3d, float scale) noexcept;
+using StoreOutputUint8Fn = void (*)(const float* a_ptr, std::uint8_t* dst_row, int count, bool fft3d, float base,
+                                    float scale, float peak) noexcept;
+using StoreOutputUint16Fn = void (*)(const float* a_ptr, std::uint16_t* dst_row, int count, bool fft3d, float base,
+                                     float scale, float peak) noexcept;
+
+struct SpatialKernels {
+  GatherFft3dFn gather_fft3d = nullptr;
+  GatherDfttestFn gather_dfttest = nullptr;
+  ScatterFft3dBlockFn scatter_fft3d_block = nullptr;
+  ScatterFft3dRowFn scatter_fft3d_row = nullptr;
+  ScatterDfttestFn scatter_dfttest = nullptr;
+  StoreOutputFloatFn store_output_float = nullptr;
+  StoreOutputUint8Fn store_output_uint8 = nullptr;
+  StoreOutputUint16Fn store_output_uint16 = nullptr;
+};
+
+SpatialKernels select_spatial(int opt);
+const SpatialKernels& spatial_scalar() noexcept;
+const char* spatial_target(int opt);
+
+} // namespace neo_fft

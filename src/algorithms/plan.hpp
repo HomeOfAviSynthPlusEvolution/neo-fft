@@ -1,6 +1,7 @@
 #pragma once
 #include "algorithms/windows.hpp"
 #include "kernels/spectral.hpp"
+#include "kernels/spatial.hpp"
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
 
@@ -46,6 +47,7 @@ private:
   std::vector<std::complex<float>> grid_;
   SpectralParams params_;
   SpectralKernel kernel_;
+  SpatialKernels spatial_;
   float mean_scale_ = 0;
   bool center_ = false;
   mutable runtime::WorkspacePool pool_;

@@ -65,11 +65,12 @@ void validate(const DFTConfig& c) {
   require(c.pmin <= c.pmax, "DFTTest pmin exceeds pmax");
   require(std::isfinite(c.f0beta) && c.f0beta > 0, "DFTTest f0beta must be positive");
   select_spectral(c.opt);
+  select_spatial(c.opt);
 }
 Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), fft(c.bh, c.bw),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
-      kernel_(select_spectral(c.opt)), mean_scale_(c.degrid),
+      kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), mean_scale_(c.degrid),
       pool_(runtime::make_workspace_budget(geometry, fft, true,
                                            select_optimal_batch_size(fft.samples(), geometry.x.count))) {
   valid_format(f);
@@ -90,7 +91,7 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
 }
 Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), fft(c.block, c.block),
-      kernel_(select_spectral(c.opt)), mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
+      kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
       pool_(runtime::make_workspace_budget(geometry, fft, false,
                                            select_optimal_batch_size(fft.samples(), geometry.x.count))) {
   valid_format(f);
@@ -165,9 +166,7 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
             const float* src_row = ws.padded().row_ptr(oy + y) + ox;
             float* blk_row = blk + y * gx.block;
             const float wy = wy_.analysis[y];
-            for (int x = 0; x < gx.block; ++x) {
-              blk_row[x] = (src_row[x] * wy) * wx_a[x];
-            }
+            spatial_.gather_fft3d(src_row, wx_a, wy, blk_row, gx.block);
           }
         }
       } else {
@@ -179,9 +178,7 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
             const float* src_row = ws.padded().row_ptr(oy + y) + ox;
             float* blk_row = blk + y * gx.block;
             const float* h_row = h_data + y * gx.block;
-            for (int x = 0; x < gx.block; ++x) {
-              blk_row[x] = src_row[x] * h_row[x];
-            }
+            spatial_.gather_dfttest(src_row, h_row, blk_row, gx.block);
           }
         }
       }
@@ -214,9 +211,7 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
           for (int y = 0; y < gy.block; ++y) {
             float* r_row = row.row_ptr(y) + ox;
             const float* inv_row = inv_b + y * gx.block;
-            for (int x = 0; x < gx.block; ++x) {
-              r_row[x] += inv_row[x] * wx_s[x];
-            }
+            spatial_.scatter_fft3d_block(inv_row, wx_s, r_row, gx.block);
           }
         }
       } else {
@@ -228,9 +223,7 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
             float* acc_row = accum.row_ptr(oy + y) + ox;
             const float* inv_row = inv_b + y * gx.block;
             const float* h_syn_row = h_syn_data + y * gx.block;
-            for (int x = 0; x < gx.block; ++x) {
-              acc_row[x] += inv_row[x] * h_syn_row[x];
-            }
+            spatial_.scatter_dfttest(inv_row, h_syn_row, acc_row, gx.block);
           }
         }
       }
@@ -240,9 +233,7 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
         const float* r_ptr = row.row_ptr(y);
         float* a_ptr = accum.row_ptr(oy + y);
         const float wy = wy_.synthesis[y];
-        for (int x = 0; x < gx.cover; ++x) {
-          a_ptr[x] += r_ptr[x] * wy;
-        }
+        spatial_.scatter_fft3d_row(r_ptr, wy, a_ptr, gx.cover);
       }
     }
   }
@@ -251,33 +242,23 @@ void Plan::run(span2d::Plane<const T> src, span2d::Plane<T> dst, runtime::Worksp
     for (int y = 0; y < dst.height(); ++y) {
       const float* a_ptr = accum.row_ptr(y + gy.offset) + gx.offset;
       float* dst_row = dst.row_ptr(y);
-      if (algorithm == Algorithm::FFT3D) {
-        for (int x = 0; x < dst.width(); ++x) {
-          dst_row[x] = std::clamp(a_ptr[x], 0.0f, 1.0f);
-        }
-      } else {
-        for (int x = 0; x < dst.width(); ++x) {
-          dst_row[x] = a_ptr[x] * scale;
-        }
-      }
+      spatial_.store_output_float(a_ptr, dst_row, dst.width(), algorithm == Algorithm::FFT3D, scale);
+    }
+  } else if constexpr (sizeof(T) == 1) {
+    const float peak = float((1 << format.bits) - 1);
+    const float scale = float(1 << (format.bits - 8));
+    for (int y = 0; y < dst.height(); ++y) {
+      const float* a_ptr = accum.row_ptr(y + gy.offset) + gx.offset;
+      auto* dst_row = reinterpret_cast<std::uint8_t*>(dst.row_ptr(y));
+      spatial_.store_output_uint8(a_ptr, dst_row, dst.width(), algorithm == Algorithm::FFT3D, base, scale, peak);
     }
   } else {
     const float peak = float((1 << format.bits) - 1);
+    const float scale = float(1 << (format.bits - 8));
     for (int y = 0; y < dst.height(); ++y) {
       const float* a_ptr = accum.row_ptr(y + gy.offset) + gx.offset;
-      T* dst_row = dst.row_ptr(y);
-      if (algorithm == Algorithm::FFT3D) {
-        for (int x = 0; x < dst.width(); ++x) {
-          const float v = (a_ptr[x] + 0.5f) + base;
-          dst_row[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
-        }
-      } else {
-        const float scale = float(1 << (format.bits - 8));
-        for (int x = 0; x < dst.width(); ++x) {
-          const float v = (a_ptr[x] * scale) + 0.5f;
-          dst_row[x] = static_cast<T>(std::clamp(v, 0.0f, peak));
-        }
-      }
+      auto* dst_row = reinterpret_cast<std::uint16_t*>(dst.row_ptr(y));
+      spatial_.store_output_uint16(a_ptr, dst_row, dst.width(), algorithm == Algorithm::FFT3D, base, scale, peak);
     }
   }
 }
