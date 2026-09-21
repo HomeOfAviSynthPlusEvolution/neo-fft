@@ -84,7 +84,7 @@ foreach(target ${NEO_FFT_FFT_TARGETS})
 endforeach()
 
 if(NEO_FFT_ENABLE_SIMD AND ("avx2" IN_LIST NEO_FFT_FFT_TARGETS))
-  add_library(neo_fft_codelet_avx2 OBJECT src/spectral/codelets/fft16x16_avx2.cpp)
+  add_library(neo_fft_codelet_avx2 OBJECT src/spectral/codelets/fft16x16_avx2.cpp src/spectral/codelets/fft8x8_avx2.cpp)
   target_include_directories(neo_fft_codelet_avx2 PUBLIC src)
   target_compile_features(neo_fft_codelet_avx2 PUBLIC cxx_std_17)
   set_target_properties(neo_fft_codelet_avx2 PROPERTIES POSITION_INDEPENDENT_CODE ON

@@ -1,5 +1,6 @@
 #include "spectral/fft_backend.hpp"
 #include "spectral/codelets/fft16x16.hpp"
+#include "spectral/codelets/fft8x8.hpp"
 
 #include <algorithm>
 #include <array>
@@ -254,6 +255,10 @@ void r2c(int height, int width, const float* in, std::size_t in_row_stride, std:
     codelet::fft16x16_r2c(in, in_row_stride, out, out_row_stride);
     return;
   }
+  if (height == 8 && width == 8) {
+    codelet::fft8x8_r2c(in, in_row_stride, out, out_row_stride);
+    return;
+  }
 #endif
   ensure_plans(height, width);
   ScratchScope scope;
@@ -268,6 +273,10 @@ void c2r(int height, int width, const std::complex<float>* in, std::size_t in_ro
 #if defined(NEO_FFT_HAS_AVX2_CODELET)
   if (height == 16 && width == 16) {
     codelet::fft16x16_c2r(in, in_row_stride, out, out_row_stride, fct);
+    return;
+  }
+  if (height == 8 && width == 8) {
+    codelet::fft8x8_c2r(in, in_row_stride, out, out_row_stride, fct);
     return;
   }
 #endif
@@ -287,6 +296,10 @@ void batch_r2c(std::size_t batch, int height, int width, const float* in, std::s
 #if defined(NEO_FFT_HAS_AVX2_CODELET)
   if (height == 16 && width == 16) {
     codelet::batch_fft16x16_r2c(batch, in, in_dist, in_row_stride, out, out_dist, out_row_stride);
+    return;
+  }
+  if (height == 8 && width == 8) {
+    codelet::batch_fft8x8_r2c(batch, in, in_dist, in_row_stride, out, out_dist, out_row_stride);
     return;
   }
 #endif
@@ -311,6 +324,10 @@ void batch_c2r(std::size_t batch, int height, int width, const std::complex<floa
 #if defined(NEO_FFT_HAS_AVX2_CODELET)
   if (height == 16 && width == 16) {
     codelet::batch_fft16x16_c2r(batch, in, in_dist, in_row_stride, out, out_dist, out_row_stride, fct);
+    return;
+  }
+  if (height == 8 && width == 8) {
+    codelet::batch_fft8x8_c2r(batch, in, in_dist, in_row_stride, out, out_dist, out_row_stride, fct);
     return;
   }
 #endif

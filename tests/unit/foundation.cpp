@@ -189,8 +189,62 @@ int main() {
         }
       }
     }
+    {
+      RealFFT fft8(8, 8);
+      for (int rs : {8, 12, 16, 24}) {
+        for (int ss : {5, 8, 12}) {
+          for (std::size_t active : {0, 1, 7, 8, 9, 16, 32, 64}) {
+            const std::size_t total_blocks = 64;
+            const std::size_t in_dist = std::size_t(rs) * 8 + 8;
+            const std::size_t out_dist = std::size_t(ss) * 8 + 8;
 
-    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, 16x16 codelet, "
+            auto in_buf = buffer<float>(in_dist * total_blocks);
+            auto out_buf = buffer<float>(in_dist * total_blocks);
+            auto spec_buf = buffer<std::complex<float>>(out_dist * total_blocks);
+
+            std::fill(in_buf.begin(), in_buf.end(), -999.0f);
+            std::fill(out_buf.begin(), out_buf.end(), -777.0f);
+            std::fill(spec_buf.begin(), spec_buf.end(), std::complex<float>(-888.0f, 444.0f));
+
+            for (std::size_t b = 0; b < active; ++b) {
+              for (int y = 0; y < 8; ++y) {
+                for (int x = 0; x < 8; ++x) {
+                  in_buf[b * in_dist + y * rs + x] = float((x * 19 + y * 11 + int(b) * 5) % 29 - 14) / 15.0f;
+                }
+              }
+            }
+
+            const auto in_orig = in_buf;
+            BatchLayout r_layout{std::size_t(rs), in_dist, total_blocks, active};
+            BatchLayout s_layout{std::size_t(ss), out_dist, total_blocks, active};
+
+            fft8.forward(in_buf.data(), r_layout, spec_buf.data(), s_layout);
+            CHECK(in_buf == in_orig);
+
+            const auto spec_orig = spec_buf;
+            fft8.inverse(spec_buf.data(), s_layout, out_buf.data(), r_layout);
+            CHECK(spec_buf == spec_orig);
+
+            for (std::size_t b = 0; b < total_blocks; ++b) {
+              if (b < active) {
+                for (int y = 0; y < 8; ++y) {
+                  for (int x = 0; x < 8; ++x) {
+                    const auto idx = b * in_dist + y * rs + x;
+                    check_near(out_buf[idx], in_buf[idx], 1e-5);
+                  }
+                }
+              } else {
+                for (std::size_t i = 0; i < in_dist; ++i) {
+                  CHECK(out_buf[b * in_dist + i] == -777.0f);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    std::cout << "foundation: checked views, direct DFT, Parseval, strided partial batches, 16x16 and 8x8 codelets, "
                  "multi-target PocketFFT profiles passed\n";
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
