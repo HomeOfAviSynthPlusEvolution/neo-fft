@@ -92,16 +92,14 @@ void RealFFT::forward(const float* in, BatchLayout r, std::complex<float>* out, 
   require(r.active == s.active, "FFT batch counts differ");
   if (!r.active)
     return;
-  for (std::size_t b = 0; b < r.active; ++b)
-    backend_.r2c(height_, width_, in + b * r.distance, r.row_stride, out + b * s.distance, s.row_stride);
+  backend_.batch_r2c(r.active, height_, width_, in, r.distance, r.row_stride, out, s.distance, s.row_stride);
 }
 void RealFFT::inverse(const std::complex<float>* in, BatchLayout s, float* out, BatchLayout r) const {
   require(r.active == s.active, "FFT batch counts differ");
   if (!r.active)
     return;
   const float scale = 1.0f / (float(width_) * float(height_));
-  for (std::size_t b = 0; b < r.active; ++b)
-    backend_.c2r(height_, width_, in + b * s.distance, s.row_stride, out + b * r.distance, r.row_stride, scale);
+  backend_.batch_c2r(r.active, height_, width_, in, s.distance, s.row_stride, out, r.distance, r.row_stride, scale);
 }
 void RealFFT::forward(const float* in, std::complex<float>* out) const {
   forward(in, {std::size_t(width_), samples(), 1, 1}, out, {std::size_t(columns()), bins(), 1, 1});

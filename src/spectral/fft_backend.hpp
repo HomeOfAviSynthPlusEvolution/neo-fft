@@ -12,6 +12,12 @@ struct FftBackend {
               std::size_t out_row_stride);
   void (*c2r)(int height, int width, const std::complex<float>* in, std::size_t in_row_stride, float* out,
               std::size_t out_row_stride, float fct);
+  void (*batch_r2c)(std::size_t batch, int height, int width, const float* in, std::size_t in_dist,
+                    std::size_t in_row_stride, std::complex<float>* out, std::size_t out_dist,
+                    std::size_t out_row_stride);
+  void (*batch_c2r)(std::size_t batch, int height, int width, const std::complex<float>* in, std::size_t in_dist,
+                    std::size_t in_row_stride, float* out, std::size_t out_dist,
+                    std::size_t out_row_stride, float fct);
 };
 
 namespace detail {
