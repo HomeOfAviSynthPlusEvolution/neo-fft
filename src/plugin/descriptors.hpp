@@ -140,7 +140,8 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.sigma = p.number("sigma", 2);
   c.beta = p.number("beta", 1);
   c.degrid = p.number("degrid", 1);
-  require(p.integer("bt", 3) == 1, "unsupported phase-1 bt: specify bt=1");
+  c.bt = p.integer("bt", 3);
+  require(c.bt >= 1 && c.bt <= 5, "FFT3D bt outside 1..5");
   p.same("kratio", 2.0f);
   p.same("sharpen", 0.0f);
   p.same("scutoff", 0.3f);
@@ -182,7 +183,8 @@ inline DFTConfig dft_config(Params p) {
   c.tbeta = p.number("tbeta", 2.5f);
   c.f0beta = p.number("f0beta", 1);
   c.zmean = p.boolean("zmean", true);
-  require(p.integer("tbsize", 3) == 1, "unsupported phase-1 tbsize: specify tbsize=1");
+  c.tbsize = p.integer("tbsize", 3);
+  require(c.tbsize >= 1 && c.tbsize <= 15 && c.tbsize % 2 == 1, "DFTTest tbsize must be odd integer in 1..15");
   p.same("tmode", 0);
   p.integer("tosize", 0);
   require(p.integers("nlocation").empty(), "unsupported phase-1 nlocation");

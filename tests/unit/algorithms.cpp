@@ -112,6 +112,87 @@ void windows() {
     }
   }
 }
+
+void temporal_plan_tests() {
+  // 1. DFTTest 3D zmean constant volume test: B=1, T=3, q=[1, 2, 6]
+  // With zmean=true, ftype=2, sigma=0, target reconstructs 3 (temporal mean).
+  // With zmean=false, reconstructs 0.
+  {
+    DFTConfig c;
+    c.block = 1;
+    c.mode = 0;
+    c.tbsize = 3;
+    c.swin = 7;
+    c.twin = 7;
+    c.ftype = 2;
+    c.sigma = 0;
+    c.zmean = true;
+    Plan plan_zmean(1, 1, {8, false, false}, c);
+    std::uint8_t q0 = 1, q1 = 2, q2 = 6, out = 0;
+    span2d::Plane<const std::uint8_t> srcs[3] = {
+      checked_plane(&q0, 1, 1, 1, 1),
+      checked_plane(&q1, 1, 1, 1, 1),
+      checked_plane(&q2, 1, 1, 1, 1),
+    };
+    auto dst = checked_plane(&out, 1, 1, 1, 1);
+    plan_zmean.process(span2d::Span<const span2d::Plane<const std::uint8_t>>(srcs, 3), dst);
+    CHECK(out == 3);
+
+    c.zmean = false;
+    Plan plan_nozmean(1, 1, {8, false, false}, c);
+    plan_nozmean.process(span2d::Span<const span2d::Plane<const std::uint8_t>>(srcs, 3), dst);
+    CHECK(out == 0);
+  }
+
+  // 2. FFT3D bt=3 multi-frame sigma=0 identity test
+  {
+    FFT3DConfig c;
+    c.bw = 8;
+    c.bh = 8;
+    c.ow = 4;
+    c.oh = 4;
+    c.bt = 3;
+    c.sigma = 0;
+    Plan plan(16, 16, {8, false, false}, c);
+    std::vector<std::uint8_t> f0(256, 10), f1(256, 20), f2(256, 30), out(256, 0);
+    span2d::Plane<const std::uint8_t> srcs[3] = {
+      checked_plane(f0.data(), 16, 16, 16, 256),
+      checked_plane(f1.data(), 16, 16, 16, 256),
+      checked_plane(f2.data(), 16, 16, 16, 256),
+    };
+    auto dst = checked_plane(out.data(), 16, 16, 16, 256);
+    plan.process(span2d::Span<const span2d::Plane<const std::uint8_t>>(srcs, 3), dst);
+    for (std::size_t i = 0; i < 256; ++i) {
+      CHECK(out[i] == f1[i]);
+    }
+  }
+
+  // 3. DFTTest tbsize=3 multi-frame identity test with sigma=0, ftype=2
+  {
+    DFTConfig c;
+    c.block = 8;
+    c.overlap = 4;
+    c.mode = 1;
+    c.tbsize = 3;
+    c.swin = 7;
+    c.twin = 7;
+    c.ftype = 2;
+    c.sigma = 1.0f; // gain = 1
+    c.zmean = false;
+    Plan plan(16, 16, {8, false, false}, c);
+    std::vector<std::uint8_t> f0(256, 10), f1(256, 20), f2(256, 30), out(256, 0);
+    span2d::Plane<const std::uint8_t> srcs[3] = {
+      checked_plane(f0.data(), 16, 16, 16, 256),
+      checked_plane(f1.data(), 16, 16, 16, 256),
+      checked_plane(f2.data(), 16, 16, 16, 256),
+    };
+    auto dst = checked_plane(out.data(), 16, 16, 16, 256);
+    plan.process(span2d::Span<const span2d::Plane<const std::uint8_t>>(srcs, 3), dst);
+    for (std::size_t i = 0; i < 256; ++i) {
+      CHECK(out[i] == f1[i]);
+    }
+  }
+}
 void filters() {
   std::complex<float> x{10, 0};
   SpectralParams p;
@@ -261,6 +342,7 @@ int main() {
   try {
     windows();
     filters();
+    temporal_plan_tests();
     identity<std::uint8_t>({8, false, false});
     identity<std::uint16_t>({10, false, true});
     identity<std::uint16_t>({16, false, false});

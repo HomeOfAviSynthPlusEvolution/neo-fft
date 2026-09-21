@@ -265,6 +265,25 @@ int main() {
       CHECK(padded(4, 0) == 5.0f); CHECK(padded(4, 1) == 4.0f); CHECK(padded(4, 2) == 5.0f); CHECK(padded(4, 3) == 6.0f); CHECK(padded(4, 4) == 5.0f);
     }
 
+    // Multi-slot temporal workspace test
+    {
+      Axis ax = fft3d_axis(128, 16, 8);
+      Axis ay = fft3d_axis(128, 16, 8);
+      Geometry geom(ax, ay);
+      auto budget_3slot = make_workspace_budget(geom, 256, 144, true, 3, 1);
+      CHECK(budget_3slot.temporal_slots == 3);
+      Workspace ws3(budget_3slot);
+      for (int s = 0; s < 3; ++s) {
+        auto pad = ws3.padded(s);
+        CHECK(pad.width() == ax.cover);
+        CHECK(pad.height() == ay.cover);
+        pad(0, 0) = float(s + 1);
+      }
+      for (int s = 0; s < 3; ++s) {
+        CHECK(ws3.padded(s)(0, 0) == float(s + 1));
+      }
+    }
+
     std::cout << "workspace unit tests passed successfully.\n";
     return 0;
   } catch (const std::exception& e) {

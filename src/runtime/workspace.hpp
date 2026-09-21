@@ -32,6 +32,7 @@ struct WorkspaceBudget {
   std::size_t samples = 0;
   std::size_t bins = 0;
   int batch_size = 1;
+  int temporal_slots = 1;
 
   std::size_t accum_offset = 0;
   std::size_t padded_offset = 0;
@@ -43,6 +44,8 @@ struct WorkspaceBudget {
   std::size_t total_bytes = 0;
 };
 
+WorkspaceBudget make_workspace_budget(const Geometry& geom, std::size_t samples, std::size_t bins, bool has_row_buffer,
+                                      int temporal_slots = 1, int batch_size = 1);
 WorkspaceBudget make_workspace_budget(const Geometry& geom, const RealFFT& fft, bool has_row_buffer, int batch_size = 1);
 
 class Workspace {
@@ -62,8 +65,11 @@ public:
     return span2d::Plane<float>(accum_ptr_, budget_.accum_width, budget_.accum_height, budget_.accum_stride_bytes);
   }
 
-  span2d::Plane<float> padded() const noexcept {
-    return span2d::Plane<float>(padded_ptr_, budget_.padded_width, budget_.padded_height, budget_.padded_stride_bytes);
+  span2d::Plane<float> padded(int slot = 0) const noexcept {
+    const std::size_t plane_floats = static_cast<std::size_t>(budget_.padded_height) *
+                                     (static_cast<std::size_t>(budget_.padded_stride_bytes) / sizeof(float));
+    return span2d::Plane<float>(padded_ptr_ + slot * plane_floats, budget_.padded_width, budget_.padded_height,
+                                budget_.padded_stride_bytes);
   }
 
   span2d::Plane<float> row() const noexcept {

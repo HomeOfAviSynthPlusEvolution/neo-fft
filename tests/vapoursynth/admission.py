@@ -15,9 +15,27 @@ def main():
     policy=environment(vs); c=vs.core;c.num_threads=4
     c.std.LoadPlugin(path=str(args.plugin.resolve()))
     src=c.std.BlankClip(width=128,height=96,format=vs.GRAY8,color=[128])
+    # Phase-2 temporal defaults bt=3, tbsize=3 succeed on clips with N >= 3
+    c.neo_fft.FFT3D(src).get_frame(0)
+    c.neo_fft.DFTTest(src).get_frame(0)
+
+    # Invalid temporal parameters rejection
+    fails(lambda:c.neo_fft.FFT3D(src,bt=-1),'outside 1..5')
+    fails(lambda:c.neo_fft.FFT3D(src,bt=0),'outside 1..5')
+    fails(lambda:c.neo_fft.FFT3D(src,bt=6),'outside 1..5')
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=0),'odd')
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=2),'odd')
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=4),'odd')
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=17),'odd')
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=3,tmode=1),'unsupported')
+
+    # Short clip rejection for DFTTest vs dynamic fallback for FFT3D
+    short_clip = c.std.BlankClip(width=128, height=96, format=vs.GRAY8, length=2)
+    fails(lambda:c.neo_fft.DFTTest(short_clip,tbsize=3),'less than or equal to the number of frames')
+    c.neo_fft.FFT3D(short_clip,bt=5).get_frame(0) # Degrades to 2D without error
+
     for name,temporal in [('FFT3D','bt'),('DFTTest','tbsize')]:
         call=getattr(c.neo_fft,name)
-        fails(lambda:call(src),'unsupported')
         for kwargs in [dict(opt=2),dict(fft_backend='fftw'),dict(fft_backend='gpu'),dict(planes=[-1]),dict(planes=[1]),
                        dict(sigma=float('nan')),dict(sigma=float('inf')),dict(sigma=1e100),dict(opt=1<<40),dict(sigma=-1)]:
             fails(lambda:call(src,**{temporal:1},**kwargs))
@@ -38,6 +56,17 @@ def main():
     fails(lambda:c.neo_fft.FFT3D(c.std.BlankClip(width=12,height=12,format=vs.GRAY8),bt=1,bw=8,bh=8,ow=0,oh=0),'reflection')
     fails(lambda:c.neo_fft.DFTTest(src,tbsize=1,sbsize=4,sosize=0,swin=6,zmean=True),'DC')
     c.neo_fft.DFTTest(src,tbsize=1,sbsize=4,sosize=0,swin=6,zmean=False).get_frame(0)
+
+    # Temporal execution at boundaries and center
+    for bt in (2, 3, 4, 5):
+        c.neo_fft.FFT3D(src, bt=bt).get_frame(0)
+        c.neo_fft.FFT3D(src, bt=bt).get_frame(1)
+        c.neo_fft.FFT3D(src, bt=bt).get_frame(src.num_frames - 1)
+    for tbsize in (3, 5):
+        c.neo_fft.DFTTest(src, tbsize=tbsize).get_frame(0)
+        c.neo_fft.DFTTest(src, tbsize=tbsize).get_frame(1)
+        c.neo_fft.DFTTest(src, tbsize=tbsize).get_frame(src.num_frames - 1)
+
     floatclip=c.std.BlankClip(width=128,height=96,format=vs.YUV444PS)
     def unusual(n,f):
         out=f.copy()
