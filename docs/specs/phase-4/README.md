@@ -13,7 +13,7 @@ Status: implementation specification, 2026-09-22; not an implementation or accep
 | [Execution](execution.md) | Worker controls, dispatch, allocations, error ownership and teardown |
 | [Acceptance](acceptance.md) | Independent oracles, reference comparisons and integration gates |
 
-Deliver both VS CPU functions, scalar kernels first and Highway parity where applicable. AVS integration is phase 5. GPU, DFTTest tmode=1, a new noise estimator, new public checkpoint parameters and mandatory FFTW support are outside this batch. PocketFFT remains the required/default backend. FFT3D bt=-1..5 is now supported; DFTTest tbsize remains odd, 1..15 and <= clip length.
+Deliver both VS CPU functions, scalar kernels first and Highway parity where applicable. DFTTest tmode=1 is added in [phase 5](../phase-5/README.md); AVS integration and final distribution move to phase 6. GPU, tmode=1, a new noise estimator, new public checkpoint parameters and mandatory FFTW support remain outside this phase-4 batch. PocketFFT remains the required/default backend. FFT3D bt=-1..5 is supported here; DFTTest tbsize remains odd, 1..15 and <= clip length until the phase-5 mode extension.
 
 ## Fixed reference and intentional differences
 

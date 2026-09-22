@@ -8,4 +8,6 @@
 
 [Phase 4](phase-4/README.md): Complete VS CPU behavior: deterministic FFT3D Kalman replay with bounded checkpoints, ROI and field packing, DFTTest dither, execution controls and resource lifetime. Includes integration of the fixed DS2 staged-frame release API and acceptance criteria.
 
+[Phase 5](phase-5/README.md): Original DFTTest temporal block overlap-add (`tmode=1`), even/odd temporal sizes, absolute block lattice, calibrated windows/profiles, deterministic execution and comparison with the pinned original AVS implementation. AVS integration and final distribution move to phase 6.
+
 Each function directory contains its mathematical operators in `kernel-*.md` and its public interface in `plugin.md`. Shared operators are referenced rather than duplicated. Implement the scalar definitions before adding optimized paths.
