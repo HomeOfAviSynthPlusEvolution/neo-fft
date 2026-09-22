@@ -44,6 +44,34 @@ struct Guarded {
 };
 int main() {
   try {
+    // Every offset, vector boundary and odd tail ends exactly at a guard page.
+    // Preserve input bits, reject +/-Inf and NaN even away from the first lane.
+    for (int opt : {0, 1}) {
+      const auto check = select_spatial(opt).validate_finite;
+      check(nullptr, 0);
+      for (std::size_t count = 1; count <= 257; ++count) {
+        Guarded storage(count);
+        auto* values = reinterpret_cast<float*>(storage.data) + count;
+        for (std::size_t i = 0; i < count; ++i)
+          values[i] = i % 2 ? -std::numeric_limits<float>::max() : std::numeric_limits<float>::denorm_min();
+        const std::vector<float> original(values, values + count);
+        check(values, count);
+        CHECK(std::memcmp(values, original.data(), count * sizeof(float)) == 0);
+        for (std::size_t i = 0; i < count; ++i) {
+          for (float invalid : {INFINITY, -INFINITY, NAN}) {
+            values[i] = invalid;
+            bool failed = false;
+            try { check(values, count); }
+            catch (const std::runtime_error& e) {
+              CHECK(std::string(e.what()) == "non-finite sample or intermediate");
+              failed = true;
+            }
+            CHECK(failed);
+          }
+          values[i] = original[i];
+        }
+      }
+    }
     for(int opt:{0,1}) {
       std::vector<std::complex<float>> values(32,{1,0});
       SpectralParams p;p.type=4;p.a=1;p.low=p.high=1e20f;

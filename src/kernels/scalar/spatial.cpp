@@ -5,6 +5,10 @@
 namespace neo_fft {
 namespace {
 
+void validate_finite_scalar(const float* src, std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i) finite(src[i]);
+}
+
 void gather_fft3d_scalar(const float* src, const float* wx_a, float wy, float* blk, int count) noexcept {
   for (int x = 0; x < count; ++x) {
     blk[x] = (src[x] * wy) * wx_a[x];
@@ -81,6 +85,7 @@ void store_output_uint16_scalar(const float* a_ptr, std::uint16_t* dst_row, int 
 
 const SpatialKernels& spatial_scalar() noexcept {
   static const SpatialKernels kScalar{
+      validate_finite_scalar,
       gather_fft3d_scalar,
       gather_dfttest_scalar,
       scatter_fft3d_block_scalar,

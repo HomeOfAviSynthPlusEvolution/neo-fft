@@ -3,12 +3,25 @@
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
 #include "kernels/spatial.hpp"
+#include "base/checked.hpp"
 #include <algorithm>
 
 HWY_BEFORE_NAMESPACE();
 namespace neo_fft {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
+
+void ValidateFinite(const float* src, std::size_t count) {
+  const hn::ScalableTag<float> d;
+  const auto lanes = hn::Lanes(d);
+  auto invalid = hn::MaskFalse(d);
+  std::size_t i = 0;
+  for (; count - i >= lanes; i += lanes)
+    invalid = hn::Or(invalid, hn::Not(hn::IsFinite(hn::LoadU(d, src + i))));
+  if (!hn::AllFalse(d, invalid))
+    throw std::runtime_error("non-finite sample or intermediate");
+  for (; i < count; ++i) finite(src[i]);
+}
 
 void GatherFft3d(const float* src, const float* wx_a, float wy, float* blk, int count) noexcept {
   const hn::ScalableTag<float> d;
@@ -190,6 +203,7 @@ void StoreOutputUint16(const float* a_ptr, std::uint16_t* dst_row, int count, bo
 
 SpatialKernels GetSpatialKernels() {
   return SpatialKernels{
+      ValidateFinite,
       GatherFft3d,
       GatherDfttest,
       ScatterFft3dBlock,

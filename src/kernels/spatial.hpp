@@ -4,6 +4,9 @@
 
 namespace neo_fft {
 
+// Inspect exactly count contiguous samples; zero count permits nullptr.
+// Throws the same error as finite(), without changing any samples.
+using ValidateFiniteFn = void (*)(const float* src, std::size_t count);
 using GatherFft3dFn = void (*)(const float* src, const float* wx_a, float wy, float* blk, int count) noexcept;
 using GatherDfttestFn = void (*)(const float* src, const float* h_row, float* blk, int count) noexcept;
 using ScatterFft3dBlockFn = void (*)(const float* inv, const float* wx_s, float* r_row, int count) noexcept;
@@ -16,6 +19,7 @@ using StoreOutputUint16Fn = void (*)(const float* a_ptr, std::uint16_t* dst_row,
                                      float scale, float peak) noexcept;
 
 struct SpatialKernels {
+  ValidateFiniteFn validate_finite = nullptr;
   GatherFft3dFn gather_fft3d = nullptr;
   GatherDfttestFn gather_dfttest = nullptr;
   ScatterFft3dBlockFn scatter_fft3d_block = nullptr;
