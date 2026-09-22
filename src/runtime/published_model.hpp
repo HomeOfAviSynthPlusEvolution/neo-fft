@@ -17,6 +17,9 @@ public:
   Model publish(std::vector<float> values) {
     for (float v : values) require(std::isfinite(v) && v >= 0, "invalid sampled power");
     auto complete = std::make_shared<const std::vector<float>>(std::move(values));
+    return publish(std::move(complete));
+  }
+  Model publish(Model complete) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!model_) model_ = std::move(complete);
     return model_;

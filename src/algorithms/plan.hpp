@@ -8,6 +8,7 @@
 #include "kernels/spectral.hpp"
 #include "kernels/spatial.hpp"
 #include "kernels/model.hpp"
+#include "kernels/kalman.hpp"
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
 
@@ -19,7 +20,7 @@ struct SampleFormat {
 };
 struct FFT3DConfig {
   int bw = 32, bh = 32, ow = -1, oh = -1, wintype = 0, opt = 0, bt = 1;
-  float sigma = 2, beta = 1, degrid = 1;
+  float sigma = 2, beta = 1, degrid = 1, kratio = 2;
   std::optional<float> sigma2, sigma3, sigma4;
   EnhancementConfig enhancement;
   float pfactor = 0, pcutoff = .1f;
@@ -72,16 +73,27 @@ public:
     auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane);
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
+  bool kalman() const { return kalman_; }
+  KalmanState initial_kalman() const;
+  template<class T> void advance_kalman(span2d::Plane<const T> source, KalmanState& state) const;
+  template<class T> void render_kalman(span2d::Plane<const T> source,span2d::Plane<T> dst,const KalmanState& state) const {
+    auto lease=pool_.acquire(); run<T>({&source,1},dst,*lease,0,0,&state);
+  }
   bool preview() const { return preview_; }
   bool needs_pattern_frame() const { return sampled_ && denoise_; }
   bool pattern_ready() const { return bool(sampled_model_.get()); }
   runtime::PublishedModel::Model pattern_power() const { return sampled_model_.get(); }
+  template<class T> runtime::PublishedModel::Model pattern_candidate(span2d::Plane<const T> source) const;
+  void publish_pattern(runtime::PublishedModel::Model model) const { sampled_model_.publish(std::move(model)); }
   void prepare_pattern(span2d::Plane<const std::uint8_t> source) const;
   void prepare_pattern(span2d::Plane<const std::uint16_t> source) const;
   void prepare_pattern(span2d::Plane<const float> source) const;
   runtime::WorkspacePool& workspace_pool() const noexcept { return pool_; }
 
 private:
+  bool kalman_ = false;
+  float kalman_r0_ = 0, kalman_ratio2_ = 0;
+  std::size_t state_bins() const;
   int dither_ = 0, dither_seed_ = 0;
   std::shared_ptr<const DFTNoise> dft_noise_;
   bool denoise_ = true, sampled_ = false, preview_ = false;
@@ -113,6 +125,6 @@ private:
   float beta_ = 1.0f;
   mutable runtime::WorkspacePool pool_;
   template <class T>
-  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0) const;
+  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0, const KalmanState* kalman=nullptr) const;
 };
 } // namespace neo_fft

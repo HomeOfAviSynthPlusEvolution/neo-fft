@@ -46,7 +46,8 @@ void validate(const FFT3DConfig& c) {
   require(c.bw >= 2 && c.bh >= 2, "FFT3D bw/bh must be >=2");
   require(c.ow <= c.bw / 2 && c.oh <= c.bh / 2, "FFT3D ow/oh exceeds half block");
   require(c.wintype >= 0 && c.wintype <= 2, "FFT3D wintype outside 0..2");
-  require(c.bt == -1 || (c.bt >= 1 && c.bt <= 5), "FFT3D bt outside -1 or 1..5");
+  require(c.bt >= -1 && c.bt <= 5, "FFT3D bt outside -1..5");
+  nonnegative(c.kratio,"kratio");
   validate(c.enhancement);
   nonnegative(c.pfactor, "FFT3D pfactor");
   require(std::isfinite(c.pcutoff) && c.pcutoff > 0, "FFT3D pcutoff must be positive");
@@ -106,6 +107,13 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
   const bool varying = sigmas[1] != sigmas[0] || sigmas[2] != sigmas[0] || sigmas[3] != sigmas[0];
   preview_ = c.pshow && (sampled_ || varying);
   denoise_ = denoise_ && !preview_;
+  kalman_ = c.bt==0 && !preview_;
+  if (kalman_) {
+    sigma_eff_=finite(c.sigma*factor);
+    kalman_r0_=finite((sigma_eff_*sigma_eff_)/norm_);
+    kalman_ratio2_=finite(c.kratio*c.kratio);
+    (void)state_bins();
+  }
   params_.floor = (c.beta - 1) / c.beta;
   if (denoise_ && !sampled_) {
     if (varying) {
@@ -117,6 +125,10 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
       params_.a = finite((sigma_eff_ * sigma_eff_) / norm_);
       for (int T = 1; T <= temporal_size; ++T) finite(((float(T) * sigma_eff_) * sigma_eff_) / norm_);
     }
+  }
+  if (kalman_ && !sampled_) {
+    if(primary_.empty()) finite(kalman_r0_*kalman_ratio2_);
+    else for(float r:primary_) finite(std::max(r,1e-15f)*kalman_ratio2_);
   }
   if (!preview_) enhancement_tables_ = enhancement_tables(c.bw, c.bh, factor, c.enhancement, c.opt);
   enhancement_params_.type = -2;
@@ -249,19 +261,60 @@ std::pair<int,int> Plan::select_pattern(span2d::Plane<const T> source, runtime::
   require(found, "FFT3D no pattern candidate");
   return selected;
 }
-template<class T> void Plan::build_pattern(span2d::Plane<const T> source) const {
+template<class T> runtime::PublishedModel::Model Plan::pattern_candidate(span2d::Plane<const T> source) const {
   require(needs_pattern_frame(), "FFT3D sampling is inactive");
-  if (sampled_model_.get()) return;
   auto lease = pool_.acquire();
   auto power = buffer<float>(fft.bins());
   select_pattern(source, *lease, &power);
-  model_.scale(power.data(),sample_weights_.data(),power.size(),pfactor_,float(temporal_size));
-  sampled_model_.publish(std::move(power));
+  model_.scale(power.data(),sample_weights_.data(),power.size(),kalman_ ? 1.0f : pfactor_,float(temporal_size));
+  if (kalman_) for(float r:power) finite(std::max(r,1e-15f)*kalman_ratio2_);
+  return std::make_shared<const std::vector<float>>(std::move(power));
 }
+template<class T> void Plan::build_pattern(span2d::Plane<const T> source) const {
+  if (!sampled_model_.get()) publish_pattern(pattern_candidate(source));
+}
+template runtime::PublishedModel::Model Plan::pattern_candidate<std::uint8_t>(span2d::Plane<const std::uint8_t>) const;
+template runtime::PublishedModel::Model Plan::pattern_candidate<std::uint16_t>(span2d::Plane<const std::uint16_t>) const;
+template runtime::PublishedModel::Model Plan::pattern_candidate<float>(span2d::Plane<const float>) const;
 void Plan::prepare_pattern(span2d::Plane<const std::uint8_t> source) const { build_pattern(source); }
 void Plan::prepare_pattern(span2d::Plane<const std::uint16_t> source) const { build_pattern(source); }
 void Plan::prepare_pattern(span2d::Plane<const float> source) const { build_pattern(source); }
 
+std::size_t Plan::state_bins() const {
+  return mul_size(mul_size(std::size_t(geometry.x.count),std::size_t(geometry.y.count)),fft.bins());
+}
+KalmanState Plan::initial_kalman() const {
+  require(kalman_,"not a Kalman plan");
+  const auto count=state_bins();
+  KalmanState state{buffer<std::complex<float>>(count),buffer<std::complex<float>>(count),buffer<std::complex<float>>(count)};
+  std::fill(state.covariance.begin(),state.covariance.end(),std::complex<float>(kalman_r0_,kalman_r0_));
+  state.process=state.covariance;
+  return state;
+}
+template<class T> void Plan::advance_kalman(span2d::Plane<const T> source,KalmanState& state) const {
+  require(kalman_,"not a Kalman plan");
+  require(source.width()==geometry.x.length && source.height()==geometry.y.length,"Kalman source shape differs");
+  require(format.floating==std::is_same_v<T,float> && (format.floating || ((format.bits==8)==(sizeof(T)==1))),"Kalman storage differs");
+  checked_plane(source.data(),source.width(),source.height(),source.stride_bytes(),plane_extent<T>(source.width(),source.height(),source.stride_bytes()));
+  require(state.last.size()==state_bins() && state.covariance.size()==state_bins() && state.process.size()==state_bins(),"Kalman state shape differs");
+  auto sampled=sampled_ ? sampled_model_.get() : runtime::PublishedModel::Model{};
+  require(!sampled_ || bool(sampled),"Kalman sampled model not initialized");
+  const float* pattern=sampled ? sampled->data() : primary_.empty() ? nullptr : primary_.data();
+  auto lease=pool_.acquire(); auto& ws=*lease;
+  pad_source(source,ws.padded(),geometry,format,algorithm);
+  const auto& gx=geometry.x;const auto& gy=geometry.y;
+  for(int by=0;by<gy.count;++by) for(int bx=0;bx<gx.count;++bx) {
+    for(int y=0;y<gy.block;++y)
+      spatial_.gather_fft3d(ws.padded().row_ptr(by*gy.step+y)+bx*gx.step,wx_.analysis.data(),wy_.analysis[y],ws.block().data()+std::size_t(y)*gx.block,gx.block);
+    fft.forward(ws.block().data(),ws.spectrum().data());
+    const auto offset=(std::size_t(by)*gx.count+bx)*fft.bins();
+    kalman_scalar(ws.spectrum().data(),state.last.data()+offset,state.covariance.data()+offset,state.process.data()+offset,
+                  pattern,kalman_r0_,kalman_ratio2_,fft.bins());
+  }
+}
+template void Plan::advance_kalman<std::uint8_t>(span2d::Plane<const std::uint8_t>,KalmanState&) const;
+template void Plan::advance_kalman<std::uint16_t>(span2d::Plane<const std::uint16_t>,KalmanState&) const;
+template void Plan::advance_kalman<float>(span2d::Plane<const float>,KalmanState&) const;
 void Plan::enhance(std::complex<float>* spectrum) const {
   if (!enhancement_params_.enhancement.active()) return;
   const float scale = grid_.empty() ? 0 : finite(finite(mean_scale_ * spectrum[0].real()) / grid_[0].real());
@@ -269,7 +322,7 @@ void Plan::enhance(std::complex<float>* spectrum) const {
 }
 
 template <class T>
-void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame, int plane) const {
+void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame, int plane, const KalmanState* kalman) const {
   require(!sources.empty(), "sources must not be empty");
   const auto& gx = geometry.x;
   const auto& gy = geometry.y;
@@ -291,7 +344,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     const auto se = plane_extent<T>(src.width(), src.height(), src.stride_bytes());
     checked_plane(src.data(), src.width(), src.height(), src.stride_bytes(), se);
     if constexpr (std::is_same_v<T, float>) {
-      for (int y = 0; !preview_ && y < src.height(); ++y)
+      for (int y = 0; !preview_ && !kalman && y < src.height(); ++y)
         spatial_.validate_finite(src.row_ptr(y), std::size_t(src.width()));
     }
   }
@@ -317,7 +370,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   }
   ws.reset();
   for (int j = 0; j < T_slots; ++j) {
-    if (!preview_) pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
+    if (!preview_ && !kalman) pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
   }
 
   auto accum = ws.accum();
@@ -358,6 +411,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
 
         if (T_slots == 1) {
           float* blk = ws.block(0).data();
+          if (!kalman) {
           for (int y = 0; y < gy.block; ++y) {
             const float* src_row = ws.padded(0).row_ptr(oy + y) + ox;
             float* blk_row = blk + y * gx.block;
@@ -366,9 +420,15 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           }
 
           fft.forward(blk, ws.spectrum(0).data());
+          } else {
+            require(kalman->last.size()==state_bins(),"Kalman checkpoint shape differs");
+            const auto offset=(std::size_t(by)*gx.count+bx_start)*fft.bins();
+            std::copy_n(kalman->last.data()+offset,fft.bins(),ws.spectrum().data());
+          }
           auto* spec_b = ws.spectrum(0).data();
           const float scale = grid_.empty() ? 0 : (mean_scale_ * spec_b[0].real()) / grid_[0].real();
-          if (denoise_) {
+          if (kalman) enhance(spec_b);
+          else if (denoise_) {
             kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, parameters);
             if (parameters.primary_mode == PrimaryMode::Table) enhance(spec_b);
           } else enhance(spec_b);
@@ -598,7 +658,7 @@ void Plan::process(span2d::Span<const span2d::Plane<const float>> sources, span2
                    runtime::Workspace& ws) const {
   run(sources, dst, ws);
 }
-template void Plan::run<std::uint8_t>(span2d::Span<const span2d::Plane<const std::uint8_t>>,span2d::Plane<std::uint8_t>,runtime::Workspace&,int,int) const;
-template void Plan::run<std::uint16_t>(span2d::Span<const span2d::Plane<const std::uint16_t>>,span2d::Plane<std::uint16_t>,runtime::Workspace&,int,int) const;
-template void Plan::run<float>(span2d::Span<const span2d::Plane<const float>>,span2d::Plane<float>,runtime::Workspace&,int,int) const;
+template void Plan::run<std::uint8_t>(span2d::Span<const span2d::Plane<const std::uint8_t>>,span2d::Plane<std::uint8_t>,runtime::Workspace&,int,int,const KalmanState*) const;
+template void Plan::run<std::uint16_t>(span2d::Span<const span2d::Plane<const std::uint16_t>>,span2d::Plane<std::uint16_t>,runtime::Workspace&,int,int,const KalmanState*) const;
+template void Plan::run<float>(span2d::Span<const span2d::Plane<const float>>,span2d::Plane<float>,runtime::Workspace&,int,int,const KalmanState*) const;
 } // namespace neo_fft

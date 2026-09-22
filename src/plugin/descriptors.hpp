@@ -142,7 +142,7 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.degrid = p.number("degrid", 1);
   c.bt = p.integer("bt", 3);
 
-  p.same("kratio", 2.0f);
+  c.kratio=p.number("kratio",2.0f);
   c.enhancement.sharpen = p.number("sharpen", 0.0f);
   c.enhancement.scutoff = p.number("scutoff", 0.3f);
   c.enhancement.svr = p.number("svr", 1.0f);

@@ -1,7 +1,9 @@
 #pragma once
 #include "plugin/descriptors.hpp"
 #include "plugin/roi.hpp"
-#include <dualsynth/video_filter.hpp>
+#include <dualsynth/staged_video.hpp>
+#include "runtime/checkpoints.hpp"
+#include <atomic>
 #include <memory>
 #include <cstring>
 
@@ -11,6 +13,7 @@ struct Filter {
   static constexpr const char* name = A == Algorithm::FFT3D ? "FFT3D" : "DFTTest";
   static constexpr int input_count = ds::dynamic_video_inputs;
   static constexpr ds::OutputOrigin output_origin = ds::OutputOrigin::fresh(0);
+  static constexpr ds::HostRequirements host_requirements{true,0,0};
   struct State {
     ds::VideoInputInfo source;
     std::array<std::shared_ptr<const Plan>, 3> plans{};
@@ -20,6 +23,9 @@ struct Filter {
     bool sampled = false;
     std::shared_ptr<const DFTNoise> dft_noise;
     int sample_bits = 8;
+    bool kalman = false;
+    std::shared_ptr<runtime::Checkpoints> checkpoints = std::make_shared<runtime::Checkpoints>();
+    std::shared_ptr<std::atomic<bool>> models_ready = std::make_shared<std::atomic<bool>>(false);
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
     require(ctx.params && ctx.inputs.size() == 1, "missing clip or parameters");
@@ -86,13 +92,128 @@ struct Filter {
       for (const auto& plan : state.plans) if (plan) {
         if (plan->preview()) state.temporal_size = 1;
         state.sampled = state.sampled || plan->needs_pattern_frame();
+        state.kalman = state.kalman || plan->kalman();
       }
     }
     return ds::Result<ds::VideoInitStateResult<State>>::success(
         {{info.width, info.height, info.num_frames, f, info.fps}, std::move(state)});
   }
   static ds::VideoRequestPattern request_pattern(int, const State& state) {
-    return state.temporal_size > 1 || state.sampled || state.dft_noise ? ds::VideoRequestPattern::General : ds::VideoRequestPattern::StrictSpatial;
+    return state.kalman || state.temporal_size > 1 || state.sampled || state.dft_noise ? ds::VideoRequestPattern::General : ds::VideoRequestPattern::StrictSpatial;
+  }
+  struct RequestState {
+    bool initialized=false, sample=false, ordinary=false;
+    int pending=-1;
+    runtime::Checkpoints::Lease start;
+    std::unique_ptr<runtime::Checkpoint> current;
+    int replay_start=0, steps=0;
+  };
+  template<class T,class Function> static void with_roi(const ds::PlaneView& view,const ROI& roi,Function&& fn) {
+    auto s=checked_plane(static_cast<const T*>(view.data),view.width,view.height,view.stride_bytes,
+                         plane_extent<T>(view.width,view.height,view.stride_bytes));
+    if(!roi.interlaced) fn(checked_subplane(s,roi.left,roi.top,roi.width,roi.height));
+    else { PackedROI<T> packed(s,roi);fn(span2d::Plane<const T>(packed.view)); }
+  }
+  static void validate_source(const ds::VideoFrameView& frame,const State& state) {
+    require(frame.format==state.source.format && frame.plane_count==state.source.format.plane_count,"frame format differs from plan");
+    for(int p=0;p<frame.plane_count;++p) {
+      const bool chroma=state.source.format.color_family==ds::ColorFamily::Yuv && p>0;
+      require(frame.plane(p).width==(state.source.width>>(chroma ? state.source.format.subsampling_w:0)) &&
+              frame.plane(p).height==(state.source.height>>(chroma ? state.source.format.subsampling_h:0)),"frame plane dimensions differ from plan");
+    }
+  }
+  static ds::Result<ds::VideoStageResult> advance(ds::VideoStageContext& ctx,RequestState& r) {
+    using Stage=ds::VideoStageResult;
+    const auto& state=ctx.state<State>();const int n=ctx.output_frame;
+    const auto waiting=[&](int index) {r.pending=index;ctx.request_frame(0,index);return ds::Result<Stage>::success(Stage::RequestFrames);};
+    if(!r.initialized) {
+      r.initialized=true;
+      if(!state.kalman || n==0) {
+        r.ordinary=true;
+        if(state.kalman) ctx.request_frame(0,n);
+        else unwrap(request(ctx));
+        return ds::Result<Stage>::success(Stage::RequestFrames);
+      }
+      r.start=state.checkpoints->acquire(n);
+      r.replay_start=r.start ? r.start->frame : 0;
+      if(r.replay_start<n) {
+        r.current=r.start ? std::make_unique<runtime::Checkpoint>(*r.start) : std::make_unique<runtime::Checkpoint>();
+        if(!r.start) for(int p=0;p<state.source.format.plane_count;++p)
+          if(state.plans[p]) r.current->planes[p]=state.plans[p]->initial_kalman();
+      }
+      r.sample=state.sampled && !state.models_ready->load(std::memory_order_acquire);
+      if(r.sample) return waiting(state.pattern_frame);
+      return waiting(r.replay_start<n ? r.replay_start+1 : n);
+    }
+    if(r.ordinary) return ds::Result<Stage>::success(Stage::Ready);
+    {
+      const auto source=unwrap(ctx.frames.get(0,r.pending));
+      validate_source(source.frame,state);
+      if(r.sample) {
+        std::array<runtime::PublishedModel::Model,3> candidates;
+        for(int p=0;p<state.source.format.plane_count;++p) if(state.plans[p] && state.plans[p]->needs_pattern_frame()) {
+          const auto compute=[&](auto s) {candidates[p]=state.plans[p]->pattern_candidate(s);};
+          const auto& view=source.frame.plane(p);
+          switch(state.source.format.sample_format) {
+            case ds::SampleFormat::UInt8: with_roi<std::uint8_t>(view,state.rois[p],compute);break;
+            case ds::SampleFormat::Float32: with_roi<float>(view,state.rois[p],compute);break;
+            default: with_roi<std::uint16_t>(view,state.rois[p],compute);break;
+          }
+        }
+        for(int p=0;p<state.source.format.plane_count;++p) if(candidates[p]) state.plans[p]->publish_pattern(std::move(candidates[p]));
+        state.models_ready->store(true,std::memory_order_release);
+      } else if(r.current) {
+        for(int p=0;p<state.source.format.plane_count;++p) if(state.plans[p]) {
+          const auto consume=[&](auto s) {state.plans[p]->advance_kalman(s,r.current->planes[p]);};
+          const auto& view=source.frame.plane(p);
+          switch(state.source.format.sample_format) {
+            case ds::SampleFormat::UInt8: with_roi<std::uint8_t>(view,state.rois[p],consume);break;
+            case ds::SampleFormat::Float32: with_roi<float>(view,state.rois[p],consume);break;
+            default: with_roi<std::uint16_t>(view,state.rois[p],consume);break;
+          }
+        }
+        r.current->frame=r.pending; ++r.steps;
+      }
+    } // Drop get()'s owning snapshot before releasing the staged-store owner.
+    if(r.sample) {
+      unwrap(ctx.release_frame(0,r.pending));r.sample=false;
+      return waiting(r.replay_start<n ? r.replay_start+1 : n);
+    }
+    if(r.pending==n) return ds::Result<Stage>::success(Stage::Ready);
+    unwrap(ctx.release_frame(0,r.pending));
+    return waiting(r.pending+1); // pending<n<=INT_MAX, so this cannot overflow.
+  }
+  template<class T> static void render_plane(const ds::PlaneView& src,const ds::MutablePlaneView& dst,
+                                             const Plan* plan,const ROI& roi,const KalmanState* state) {
+    const auto s=checked_plane(static_cast<const T*>(src.data),src.width,src.height,src.stride_bytes,plane_extent<T>(src.width,src.height,src.stride_bytes));
+    const auto d=checked_plane(static_cast<T*>(dst.data),dst.width,dst.height,dst.stride_bytes,plane_extent<T>(dst.width,dst.height,dst.stride_bytes));
+    require(s.width()==d.width() && s.height()==d.height(),"output plane shape differs");
+    disjoint(s.data(),plane_extent<T>(src.width,src.height,src.stride_bytes),d.data(),plane_extent<T>(dst.width,dst.height,dst.stride_bytes));
+    for(int y=0;y<d.height();++y) std::memcpy(d.row_ptr(y),s.row_ptr(y),std::size_t(d.width())*sizeof(T));
+    if(!plan || !state) return;
+    if(!roi.interlaced) plan->render_kalman(checked_subplane(s,roi.left,roi.top,roi.width,roi.height),checked_subplane(d,roi.left,roi.top,roi.width,roi.height),*state);
+    else {
+      PackedROI<T> input(s,roi),output(s,roi);
+      plan->render_kalman(span2d::Plane<const T>(input.view),output.view,*state);output.write(d,roi);
+    }
+  }
+  static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx,RequestState& r) {
+    const auto& state=ctx.state<State>();
+    if(!state.kalman) return process(ctx);
+    const auto src=unwrap(ctx.frames.get(0,ctx.output_frame));validate_source(src.frame,state);
+    require(ctx.dst.format==state.source.format && ctx.dst.plane_count==state.source.format.plane_count,"output format differs");
+    const auto* checkpoint=r.current ? r.current.get() : r.start.get();
+    for(int p=0;p<ctx.dst.plane_count;++p) {
+      const auto* k=checkpoint && state.plans[p] ? &checkpoint->planes[p] : nullptr;
+      const auto& s=src.frame.plane(p);const auto& d=ctx.dst.plane(p);
+      switch(state.source.format.sample_format) {
+        case ds::SampleFormat::UInt8: render_plane<std::uint8_t>(s,d,state.plans[p].get(),state.rois[p],k);break;
+        case ds::SampleFormat::Float32: render_plane<float>(s,d,state.plans[p].get(),state.rois[p],k);break;
+        default: render_plane<std::uint16_t>(s,d,state.plans[p].get(),state.rois[p],k);break;
+      }
+    }
+    if(r.current) state.checkpoints->publish(std::move(r.current));
+    return ds::Result<ds::VideoProcessResult>::success({});
   }
   static ds::Result<ds::VideoRequestResult> request(ds::VideoRequestContext& ctx) {
     const auto& state = ctx.state<State>();
