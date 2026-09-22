@@ -6,7 +6,7 @@ Specification: P4-ACCEPT-004. These are implementation gates, not claims that te
 
 Use independent scalar test oracles for the recurrence, row mapping, diffusion and coordinate hash; do not compute expected values by calling the production helpers. Fix input seeds and preserve the existing calibration seed 1 / holdout 17,101 split for numerical budgets. Freeze budgets by algorithm, format, backend and dispatch before evaluating holdouts. Record commit/compiler/flags, backend/dependency versions, effective worker controls, format/geometry and skipped paths.
 
-Compare old-reference Kalman only in a fresh instance requested sequentially 0,1,..., on finite admitted cases with the phase-3 reference-compatible choices (including pfactor=1 for sampled strength). Reference random-order Kalman and old dither>=2 RNG are not correctness oracles. Zero-noise, unsafe crop/odd-height corners and deliberate phase-3 differences use the independent specification oracle. No unsafe reference execution is needed to prove a rejection case.
+Compare old-reference Kalman only in a fresh instance requested sequentially 0,1,..., on finite admitted cases with the phase-3 reference-compatible choices. Kalman sampled comparisons must include multiple positive pfactor values (for example 0.2, 0.7, 1 and 2), which produce identical output for otherwise identical inputs; restricting coverage to pfactor=1 would miss an incorrect inherited Wiener strength multiplier. Reference random-order Kalman and old dither>=2 RNG are not correctness oracles. Zero-noise, unsafe crop/odd-height corners and deliberate phase-3 differences use the independent specification oracle. No unsafe reference execution is needed to prove a rejection case.
 
 ## Kalman operator and output
 
@@ -14,7 +14,7 @@ Required direct-kernel cases:
 
 - Zero L and uniform R0 initialization for uniform, analytic and sampled models, including patterned R!=R0. Source frame 0 must not seed the spectrum.
 - Both branches; strict equality to motion threshold; only real or only imaginary exceeding it resets both components; kratio=0; first-step examples in the operator; bins at SIMD width-1/width/width+1 and odd transform dimensions.
-- Uniform R=0 with X=0 and X!=0 stays finite; pattern P=0 uses 1e-15; positive sampled pfactor scales power before the floor; no temporal multiplier, Wiener beta or pre-recurrence degrid.
+- Uniform R=0 with X=0 and X!=0 stays finite; pattern P=0 uses 1e-15; all positive sampled pfactor values select the same unscaled power before the floor, including finite strengths whose irrelevant multiplication would overflow or underflow; no temporal multiplier, Wiener beta or pre-recurrence degrid.
 - Active overflow fails cleanly; large squared differences that trigger reset do not fail merely because the comparison temporary is infinite. Masked SIMD lanes do not leak speculative NaNs. State/new-state aliasing follows the production kernel's documented contract and guard buffers show no tail overwrite.
 - Finite large sigma that is inactive for phase-3 sampled Wiener becomes active initial covariance in Kalman and is rejected if R0 overflows; raw invalid kratio fails even in other modes, but inactive kratio-derived overflow does not.
 - Sharpen/dehalo affect output only. Compare stored L,C,Q with enhancement enabled/disabled over several steps. Intermediate replay must not feed clipped or enhanced results back.

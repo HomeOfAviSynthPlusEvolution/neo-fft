@@ -29,7 +29,7 @@ Algorithm source anchors are relative to the repositories in [reference sources]
 Explicit project decisions:
 
 - Kalman follows the reference's **sequential 0,1,...** result, including frame 0 pass-through and zero initial last spectrum. Arbitrary request order must reproduce that sequence, rather than the reference's request-history-dependent state. No hidden state reset at a seek or checkpoint eviction.
-- Uniform zero noise uses the finite identity rule in the operator instead of 0/0. Sampled/analytic pattern noise keeps the reference's 1e-15 floor.
+- Uniform zero noise uses the finite identity rule in the operator instead of 0/0. Sampled/analytic pattern noise keeps the reference's 1e-15 floor. In Kalman, positive pfactor selects sampled noise but does not scale its power; its magnitude remains active in inherited Wiener processing. This mode-specific rule preserves the reference sequential result.
 - ROI margins are nonnegative and aligned for selected subsampled planes; mixed crop-size rounding and unsafe odd-height field packing are rejected. Interlaced processing is a full-height row permutation, **not two half-height transforms**.
 - Dither mode 1 preserves the historical diffusion equations. Modes >=2 use a specified coordinate hash and default seed 0 instead of workspace/thread-local evolving mt19937 or random_device. Only UInt8 uses dither, as in the reference.
 - Worker requests are resource limits/hints with a documented capability mapping. Automatic policy is deliberately fixed and does not follow the reference's changing host-concurrency heuristic.

@@ -19,7 +19,7 @@ This remains true for analytic/sampled noise: do not initialize C,Q with the per
 
 Gather the current source ROI into its reflected (optionally field-packed) cover, subtract the inherited sample midpoint, apply the normal analysis window and compute the spatial FFT X. No degrid subtraction is applied to X for the recurrence.
 
-For a uniform model use R=R0. For an analytic or sampled pattern use R=max(P[k],1e-15f), where P is the immutable spatial power table; it repeats across blocks. Do not multiply by a temporal length. Let K2=kratio*kratio and H=R*K2. All are binary32; require finite derived R,H. The motion predicate is:
+For a uniform model use R=R0. For an analytic or sampled pattern use R=max(P[k],1e-15f), where P is the immutable spatial power table; it repeats across blocks. Analytic P is inherited unchanged. Sampled P is the unscaled measured power `|X_sample-gG|^2*w` from phase 3: any positive pfactor selects sampling, but its magnitude does not multiply P for Kalman. Construct this unscaled table directly; do not recover it by dividing an already scaled table, which would introduce rounding, underflow or overflow dependence on pfactor. Do not multiply by a temporal length. Let K2=kratio*kratio and H=R*K2. All are binary32; require finite derived R,H. The motion predicate is:
 
 ```
 dr = X.re - L.re
