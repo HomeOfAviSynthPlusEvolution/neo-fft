@@ -23,8 +23,7 @@ template<class T,class D> void Decode(const void* input,float* out,std::size_t n
       const hn::Rebind<std::uint32_t,decltype(d)> du;
       v=hn::ConvertTo(d,hn::PromoteTo(du,hn::LoadU(dt,src+i)));
     }
-    bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
-    v=hn::Sub(v,hn::Set(d,base));bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
+    v=hn::Sub(v,hn::Set(d,base));
     v=hn::Mul(v,hn::Set(d,scale));bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
     hn::StoreU(v,d,out+i);
   }
@@ -43,8 +42,8 @@ template<class D> void WindowLanes(float* values,const float* weights,std::size_
   const auto lanes=hn::Lanes(d);auto bad=hn::MaskFalse(d);
   std::size_t i=0;
   for(;n-i>=lanes;i+=lanes) {
-    auto v=hn::LoadU(d,values+i);bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
-    v=hn::Mul(v,hn::Set(d,factor));bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
+    auto v=hn::LoadU(d,values+i);
+    v=hn::Mul(v,hn::Set(d,factor));
     v=hn::Mul(v,hn::LoadU(d,weights+i));bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
     hn::StoreU(v,d,values+i);
   }
@@ -62,13 +61,10 @@ template<class D> void PowerLanes(const std::complex<float>* spectrum,const std:
     if(grid) {
       hn::LoadInterleaved2(d,reinterpret_cast<const float*>(grid)+2*i,mr,mi);
       mr=hn::Mul(mr,hn::Set(d,ratio));mi=hn::Mul(mi,hn::Set(d,ratio));
-      bad=hn::Or(bad,hn::Not(hn::And(hn::IsFinite(mr),hn::IsFinite(mi))));
     }
     re=hn::Sub(re,mr);im=hn::Sub(im,mi);
-    bad=hn::Or(bad,hn::Not(hn::And(hn::IsFinite(re),hn::IsFinite(im))));
     re=hn::Mul(re,re);im=hn::Mul(im,im);
-    bad=hn::Or(bad,hn::Not(hn::And(hn::IsFinite(re),hn::IsFinite(im))));
-    auto q=hn::Add(re,im);bad=hn::Or(bad,hn::Not(hn::IsFinite(q)));
+    auto q=hn::Add(re,im);
     if(accumulate) q=hn::Add(hn::LoadU(d,out+i),q);
     bad=hn::Or(bad,hn::Not(hn::IsFinite(q)));hn::StoreU(q,d,out+i);
   }
@@ -82,7 +78,7 @@ template<class D> float ScoreLanes(const float* power,const float* weights,std::
   std::size_t i=0;
   for(;n-i>=lanes;i+=lanes) {
     hn::Store(hn::Mul(hn::LoadU(d,power+i),hn::LoadU(d,weights+i)),d,terms);
-    for(std::size_t j=0;j<lanes;++j) sum=finite(sum+finite(terms[j]));
+    for(std::size_t j=0;j<lanes;++j) sum=finite(sum+terms[j]);
   }
   // Carry the running sum into the narrower width; never sum a tail separately.
   if constexpr(hn::MaxLanes(D{})>1)
@@ -93,9 +89,8 @@ template<class D> void ScaleLanes(float* values,const float* weights,std::size_t
   const auto lanes=hn::Lanes(d);auto bad=hn::MaskFalse(d);
   std::size_t i=0;
   for(;n-i>=lanes;i+=lanes) {
-    auto v=hn::Mul(hn::Set(d,factor),hn::LoadU(d,values+i));bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
+    auto v=hn::Mul(hn::Set(d,factor),hn::LoadU(d,values+i));
     if(weights) v=hn::Mul(v,hn::LoadU(d,weights+i));
-    bad=hn::Or(bad,hn::Not(hn::IsFinite(v)));
     bad=hn::Or(bad,hn::Not(hn::IsFinite(hn::Mul(hn::Set(d,maximum),v))));
     hn::StoreU(v,d,values+i);
   }

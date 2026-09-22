@@ -27,6 +27,18 @@ template<class T> void check_decode(std::size_t n,const ModelKernels& native) {
 }
 void run_tests() {
   const auto native=select_model(0);const auto scalar=model_scalar();
+  // Every removed intermediate check must still reject non-finite values,
+  // including overflow followed by multiplication by zero.
+  for (auto kernels:{native,scalar}) {
+    const float max=std::numeric_limits<float>::max(),zero=0;
+    float value=max,output=0;
+    rejects([&]{kernels.decode(&value,SampleStorage::F32,&output,1,-max,0);});
+    value=max;rejects([&]{kernels.window(&value,&zero,1,max);});
+    value=max;rejects([&]{kernels.scale(&value,&zero,1,max,0);});
+    const std::complex<float> spectrum{max,0},grid{-max,0};
+    rejects([&]{kernels.power(&spectrum,&grid,1,&output,1,false);});
+    rejects([&]{(void)kernels.score(&max,&max,1);});
+  }
   const auto tables=select_table(0),reference=table_scalar();
   // Independent input frequencies exercise all segments and exact knots, with
   // a guarded logical tail for row inputs and outputs.
