@@ -26,6 +26,7 @@ Filter::State state(FFT3DConfig config, std::size_t budget=64*1024*1024) {
   config.bt=0;config.bw=8;config.bh=8;config.ow=4;config.oh=4;config.opt=1;
   Filter::State s;
   s.source={32,24,INT32_MAX,{ds::ColorFamily::Gray,ds::SampleFormat::Float32,1,0,0}};
+  s.executor=std::make_shared<runtime::Executor>(1);
   s.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},config);
   s.rois[0]={0,0,32,24,false};s.kalman=s.plans[0]->kalman();
   s.sampled=s.plans[0]->needs_pattern_frame();s.pattern_frame=11;
@@ -72,6 +73,19 @@ int main() {try {
     x={1e30f,0};l={-1e30f,0};c=q={2,2};kalman_scalar(&x,&l,&c,&q,nullptr,2,4,1);CHECK(l==x);
     x={0,0};l={0,0};c=q={2e38f,2e38f};rejects([&]{kalman_scalar(&x,&l,&c,&q,nullptr,1,4,1);});
     x={NAN,0};rejects([&]{kalman_scalar(&x,&l,&c,&q,nullptr,0,4,1);});
+  }
+  {
+    FFT3DConfig c;c.bt=0;c.bw=c.bh=8;c.opt=1;c.sigma=12;c.pfactor=.7f;c.px=c.py=2;
+    Plan patterned(32,24,{8,false,false},c);auto initial=patterned.initial_kalman();
+    CHECK(initial.last[0]==Z() && initial.covariance[0]==Z(12.f*12.f*64.f,12.f*12.f*64.f));
+    c.pfactor=0;c.enhancement.sharpen=.5f;Plan enhanced(32,24,{32,true,false},c);
+    c.enhancement.sharpen=0;Plan plain(32,24,{32,true,false},c);
+    auto a=enhanced.initial_kalman(),b=plain.initial_kalman();std::vector<float> samples(32*24,.25f),out(samples.size());
+    span2d::Plane<const float> source(samples.data(),32,24,32*4);
+    enhanced.advance_kalman(source,a);plain.advance_kalman(source,b);
+    enhanced.render_kalman(source,span2d::Plane<float>(out.data(),32,24,32*4),a);
+    CHECK(a.last==b.last && a.covariance==b.covariance && a.process==b.process);
+    enhanced.advance_kalman(source,a);plain.advance_kalman(source,b);CHECK(a.last==b.last && a.covariance==b.covariance);
   }
   for(bool sampled:{false,true}) {
     FFT3DConfig config;config.sigma=12;config.pfactor=sampled ? 1 : 0;config.px=2;config.py=2;

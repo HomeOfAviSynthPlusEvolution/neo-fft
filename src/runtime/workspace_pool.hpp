@@ -1,6 +1,6 @@
 #pragma once
 #include "runtime/workspace.hpp"
-#include <condition_variable>
+#include "runtime/retention.hpp"
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -48,8 +48,8 @@ private:
 
 class WorkspacePool {
 public:
-  explicit WorkspacePool(WorkspaceBudget budget, std::size_t max_capacity = 8);
-  ~WorkspacePool() = default;
+  explicit WorkspacePool(WorkspaceBudget budget, std::size_t max_capacity = 1, std::shared_ptr<Retention> retention = {});
+  ~WorkspacePool();
 
   WorkspacePool(const WorkspacePool&) = delete;
   WorkspacePool& operator=(const WorkspacePool&) = delete;
@@ -68,7 +68,7 @@ private:
   WorkspaceBudget budget_;
   std::size_t max_capacity_;
   mutable std::mutex mutex_;
-  std::condition_variable cv_;
+  std::shared_ptr<Retention> retention_;
   std::vector<std::unique_ptr<Workspace>> idle_;
   std::size_t active_count_ = 0;
 };

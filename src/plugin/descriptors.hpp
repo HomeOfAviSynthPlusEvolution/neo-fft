@@ -163,8 +163,8 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.dehalo = p.number("dehalo", 0.0f);
   c.enhancement.hr = p.number("hr", 2.0f);
   c.enhancement.ht = p.number("ht", 50.0f);
-  require(p.integer("ncpu", 2) > 0, "ncpu must be positive");
-  p.off("mt");
+  c.ncpu=p.integer("ncpu",2);
+  c.mt=p.boolean("mt",false);
   p.backend();
   validate(c);
   return c;
@@ -202,8 +202,8 @@ inline DFTConfig dft_config(Params p) {
   c.curves.system = p.integer("ssystem", 0);
   c.dither=p.integer("dither",0);
   c.dither_seed=p.integer("dither_seed",0);
-  require(p.integer("threads", 0) <= 1, "unsupported phase-1 threads > 1");
-  require(p.integer("fft_threads", 0) <= 1, "unsupported phase-1 fft_threads > 1");
+  c.threads=std::clamp(p.integer("threads",0),1,16);
+  c.fft_threads=std::max(1,p.integer("fft_threads",0));
   p.backend();
   validate(c);
   return c;

@@ -160,7 +160,6 @@ void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int
 
 #if !NEO_FFT_ENABLE_HIGHWAY
 SpectralKernel select_spectral(int opt) {
-  require(opt == 0 || opt == 1, "unsupported opt: expected 0 or 1");
   return spectral_scalar;
 }
 const char* spectral_target(int opt) {
@@ -168,7 +167,6 @@ const char* spectral_target(int opt) {
   return "scalar (Highway disabled)";
 }
 Fft3dTemporalKernel select_fft3d_temporal(int opt) {
-  require(opt == 0 || opt == 1, "unsupported opt: expected 0 or 1");
   return fft3d_temporal_scalar;
 }
 const char* fft3d_temporal_target(int opt) {

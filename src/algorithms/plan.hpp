@@ -9,6 +9,7 @@
 #include "kernels/spatial.hpp"
 #include "kernels/model.hpp"
 #include "kernels/kalman.hpp"
+#include "runtime/executor.hpp"
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
 
@@ -27,13 +28,14 @@ struct FFT3DConfig {
   int pframe = 0, px = 0, py = 0;
   bool pshow = false;
   int left = 0, top = 0, right = 0, bottom = 0;
-  bool interlaced = false;
+  bool interlaced = false, mt = false;
+  int ncpu = 2;
 };
 struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
   float sbeta = 2.5f, tbeta = 2.5f, sigma = 8, sigma2 = 8, pmin = 0, pmax = 500, f0beta = 1;
   bool zmean = true;
-  int dither = 0, dither_seed = 0;
+  int dither = 0, dither_seed = 0, threads = 1, fft_threads = 1;
   DFTCurves curves;
   std::vector<NoiseLocation> locations;
   std::optional<float> alpha;
@@ -42,8 +44,8 @@ void validate(const FFT3DConfig& c);
 void validate(const DFTConfig& c);
 class Plan {
 public:
-  Plan(int width, int height, SampleFormat format, const FFT3DConfig& config);
-  Plan(int width, int height, SampleFormat format, const DFTConfig& config, std::shared_ptr<const DFTNoise> noise = {});
+  Plan(int width, int height, SampleFormat format, const FFT3DConfig& config, std::shared_ptr<runtime::Executor> executor = {}, std::shared_ptr<runtime::Retention> retention = {});
+  Plan(int width, int height, SampleFormat format, const DFTConfig& config, std::shared_ptr<const DFTNoise> noise = {}, std::shared_ptr<runtime::Executor> executor = {}, std::shared_ptr<runtime::Retention> retention = {});
   const Geometry geometry;
   const SampleFormat format;
   const Algorithm algorithm;
@@ -73,6 +75,7 @@ public:
     auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane);
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
+  const runtime::Executor& executor() const {return *executor_;}
   bool kalman() const { return kalman_; }
   KalmanState initial_kalman() const;
   template<class T> void advance_kalman(span2d::Plane<const T> source, KalmanState& state) const;
@@ -91,6 +94,7 @@ public:
   runtime::WorkspacePool& workspace_pool() const noexcept { return pool_; }
 
 private:
+  std::shared_ptr<runtime::Executor> executor_;
   bool kalman_ = false;
   float kalman_r0_ = 0, kalman_ratio2_ = 0;
   std::size_t state_bins() const;

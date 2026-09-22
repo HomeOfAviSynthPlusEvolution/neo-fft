@@ -50,15 +50,15 @@ def main():
 
     for name,temporal in [('FFT3D','bt'),('DFTTest','tbsize')]:
         call=getattr(c.neo_fft,name)
-        for kwargs in [dict(opt=2),dict(fft_backend='fftw'),dict(fft_backend='gpu'),dict(planes=[-1]),dict(planes=[1]),
+        for kwargs in [dict(fft_backend='fftw'),dict(fft_backend='gpu'),dict(planes=[-1]),dict(planes=[1]),
                        dict(sigma=float('nan')),dict(sigma=float('inf')),dict(sigma=1e100),dict(opt=1<<40),dict(sigma=-1)]:
             fails(lambda:call(src,**{temporal:1},**kwargs))
         fails(lambda:call(src,**{temporal:1},sigma='wrong'))
         fails(lambda:call(src,**{temporal:1},unknown=0))
-    for kwargs in [dict(sharpen=-.1),dict(sigma2=-1),dict(mt=True),dict(l=-1),dict(kratio=-1),
+    for kwargs in [dict(sharpen=-.1),dict(sigma2=-1),dict(l=-1),dict(kratio=-1),
                    dict(wintype=3),dict(beta=0),dict(ncpu=0),dict(ow=17),dict(bw=1)]:
         fails(lambda:c.neo_fft.FFT3D(src,bt=1,**kwargs))
-    for kwargs in [dict(dither=-1),dict(threads=2),dict(fft_threads=2),dict(nlocation=[0]),dict(ssx=[1.]),
+    for kwargs in [dict(dither=-1),dict(nlocation=[0]),dict(ssx=[1.]),
                    dict(ftype=5),dict(f0beta=0),dict(pmin=2,pmax=1),dict(sbsize=8,sosize=5),dict(swin=12),
                    dict(smode=0,sbsize=4),dict(dither_seed=-1),dict(alpha=0)]:
         fails(lambda:c.neo_fft.DFTTest(src,tbsize=1,planes=[],**kwargs))

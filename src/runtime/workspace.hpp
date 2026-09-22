@@ -102,6 +102,7 @@ public:
   }
 
   // Zero accumulator plane before processing a new frame/plane
+  std::size_t retained_bytes() const { return add_size(sizeof(*this),storage_.capacity()); }
   void reset() noexcept;
 
 private:

@@ -3,18 +3,22 @@
 
 namespace neo_fft::runtime {
 
-WorkspacePool::WorkspacePool(WorkspaceBudget budget, std::size_t max_capacity)
-    : budget_(budget), max_capacity_(max_capacity) {
+WorkspacePool::WorkspacePool(WorkspaceBudget budget, std::size_t max_capacity, std::shared_ptr<Retention> retention)
+    : budget_(budget), max_capacity_(max_capacity), retention_(retention ? std::move(retention) : std::make_shared<Retention>(max_capacity)) {
   require(max_capacity > 0, "max_capacity must be positive");
   idle_.reserve(max_capacity);
 }
 
+WorkspacePool::~WorkspacePool() {
+  for(const auto& ws:idle_) retention_->release(ws->retained_bytes());
+}
+
 WorkspaceLease WorkspacePool::acquire() {
   std::unique_lock<std::mutex> lock(mutex_);
-  cv_.wait(lock, [this] { return !idle_.empty() || active_count_ < max_capacity_; });
   if (!idle_.empty()) {
     auto ws = std::move(idle_.back());
     idle_.pop_back();
+    retention_->release(ws->retained_bytes());
     ++active_count_;
     return WorkspaceLease(this, std::move(ws));
   }
@@ -26,7 +30,6 @@ WorkspaceLease WorkspacePool::acquire() {
   } catch (...) {
     lock.lock();
     --active_count_;
-    cv_.notify_one();
     throw;
   }
 }
@@ -36,9 +39,8 @@ void WorkspacePool::release(std::unique_ptr<Workspace> ws) noexcept {
     return;
   }
   std::lock_guard<std::mutex> lock(mutex_);
-  idle_.push_back(std::move(ws));
+  if (idle_.size()<max_capacity_ && retention_->acquire(ws->retained_bytes())) idle_.push_back(std::move(ws));
   --active_count_;
-  cv_.notify_one();
 }
 
 std::size_t WorkspacePool::active_count() const noexcept {

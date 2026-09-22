@@ -48,6 +48,7 @@ void validate(const FFT3DConfig& c) {
   require(c.wintype >= 0 && c.wintype <= 2, "FFT3D wintype outside 0..2");
   require(c.bt >= -1 && c.bt <= 5, "FFT3D bt outside -1..5");
   nonnegative(c.kratio,"kratio");
+  require(c.ncpu>0,"ncpu must be positive");
   validate(c.enhancement);
   nonnegative(c.pfactor, "FFT3D pfactor");
   require(std::isfinite(c.pcutoff) && c.pcutoff > 0, "FFT3D pcutoff must be positive");
@@ -59,6 +60,7 @@ void validate(const FFT3DConfig& c) {
   select_spectral(c.opt);
 }
 void validate(const DFTConfig& c) {
+  require(c.opt==0 || c.opt==1 || c.opt==2 || c.opt==3 || c.opt==8,"DFTTest opt outside 0,1,2,3,8");
   require(c.dither>=0 && c.dither_seed>=0,"dither and dither_seed must be nonnegative");
   validate(c.curves);
   require(c.locations.size() <= 500, "DFTTest nlocation exceeds 500 tuples");
@@ -84,16 +86,16 @@ void validate(const DFTConfig& c) {
   select_spectral(c.opt);
   select_spatial(c.opt);
 }
-Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
+Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c, std::shared_ptr<runtime::Executor> executor, std::shared_ptr<runtime::Retention> retention)
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), temporal_size(std::max(1, c.bt)), fft(c.bh, c.bw),
-      denoise_(c.bt != -1),
+      executor_(executor ? std::move(executor) : std::make_shared<runtime::Executor>(c.mt ? 3 : 1)), denoise_(c.bt != -1),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
       kernel_(select_spectral(c.opt)), temporal_kernel_(select_fft3d_temporal(c.opt)),
       spatial_(select_spatial(c.opt)), model_(select_model(c.opt)), mean_scale_(c.degrid),
       pool_(runtime::make_workspace_budget(geometry, fft.samples(),
                                            fft.bins() * std::size_t(std::max(1, c.bt) + 1), true,
                                            std::max(1, c.bt),
-                                           select_optimal_batch_size(fft.samples(), geometry.x.count))) {
+                                           select_optimal_batch_size(fft.samples(), geometry.x.count)),executor_->workers(),std::move(retention)) {
   valid_format(f);
   const float factor = f.floating ? 1.0f / 255 : float(1 << (f.bits - 8));
   sampled_ = c.pfactor > 0;
@@ -162,9 +164,9 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     require(grid_[0].real() != 0, "FFT3D unusable grid DC");
   }
 }
-Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<const DFTNoise> noise)
+Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<const DFTNoise> noise, std::shared_ptr<runtime::Executor> executor, std::shared_ptr<runtime::Retention> retention)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), temporal_size(c.tbsize),
-      fft(c.block, c.block), kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), model_(select_model(c.opt)),
+      fft(c.block, c.block), executor_(executor ? std::move(executor) : std::make_shared<runtime::Executor>(std::clamp(c.threads,1,16))), kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), model_(select_model(c.opt)),
       mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
       pool_(runtime::make_workspace_budget(
           geometry,
@@ -172,7 +174,7 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
           std::size_t(c.tbsize) * c.block * (c.block / 2 + 1),
           false,
           c.tbsize,
-          select_optimal_batch_size(std::size_t(c.tbsize) * c.block * c.block, geometry.x.count))) {
+          select_optimal_batch_size(std::size_t(c.tbsize) * c.block * c.block, geometry.x.count)),executor_->workers(),std::move(retention)) {
   valid_format(f);
   dither_=c.dither; dither_seed_=c.dither_seed;
   if (c.tbsize > 1) {
@@ -483,95 +485,42 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
         }
       }
     }
-  } else { // DFTTest
-    if (T_slots == 1) {
-      const float* h_data = h_.data();
-      const float* h_syn_data = h_synthesis_.data();
-      for (int by = 0; by < gy.count; ++by) {
-        const int oy = by * gy.step;
-        for (int bx_start = 0; bx_start < gx.count; ++bx_start) {
-          const int ox = bx_start * gx.step;
-          float* blk = ws.block(0).data();
-          for (int y = 0; y < gy.block; ++y) {
-            const float* src_row = ws.padded(0).row_ptr(oy + y) + ox;
-            float* blk_row = blk + y * gx.block;
-            const float* h_row = h_data + y * gx.block;
-            spatial_.gather_dfttest(src_row, h_row, blk_row, gx.block);
+  } else { // DFTTest: transforms are independent; overlap-add commits stay Y then X.
+    const std::size_t spatial_samples=mul_size(std::size_t(gx.block),std::size_t(gy.block));
+    const std::size_t bins=std::size_t(T_slots)*fft.bins();
+    const int center=T_slots/2;
+    const int capacity=ws.budget().batch_size;
+    for(int by=0;by<gy.count;++by) {
+      const int oy=by*gy.step;
+      for(int first=0;first<gx.count;) {
+        const int count=std::min(capacity,gx.count-first);
+        executor_->run(count,[&](int index) {
+          const int ox=(first+index)*gx.step;
+          float* block=ws.block(index).data();
+          for(int z=0;z<T_slots;++z) for(int y=0;y<gy.block;++y) {
+            const auto offset=std::size_t(z)*spatial_samples+std::size_t(y)*gx.block;
+            spatial_.gather_dfttest(ws.padded(z).row_ptr(oy+y)+ox,h_.data()+offset,block+offset,gx.block);
           }
-
-          fft.forward(blk, ws.spectrum(0).data());
-          auto* spec_b = ws.spectrum(0).data();
-          const float scale = grid_.empty() ? 0 : (mean_scale_ * spec_b[0].real()) / grid_[0].real();
-          kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, parameters);
-          fft.inverse(spec_b, ws.inverse(0).data());
-          spatial_.validate_finite(ws.inverse(0).data(), fft.samples());
-
-          if (center_) {
-            const int cy = gy.block / 2, cx = gx.block / 2;
-            const auto ci = std::size_t(cy) * gx.block + cx;
-            accum.row_ptr(oy + cy)[ox + cx] = ws.inverse(0).data()[ci] * h_syn_data[ci];
-          } else {
-            const float* inv_b = ws.inverse(0).data();
-            for (int y = 0; y < gy.block; ++y) {
-              float* acc_row = accum.row_ptr(oy + y) + ox;
-              const float* inv_row = inv_b + y * gx.block;
-              const float* h_syn_row = h_syn_data + y * gx.block;
-              spatial_.scatter_dfttest(inv_row, h_syn_row, acc_row, gx.block);
-            }
-          }
+          auto* spectrum=ws.spectrum(index).data();
+          if(T_slots==1) fft.forward(block,spectrum);else fft3d_->forward(block,spectrum);
+          const float scale=grid_.empty() || (T_slots>1 && (mean_scale_==0 || grid_[0].real()==0))
+              ? 0 : (mean_scale_*spectrum[0].real())/grid_[0].real();
+          kernel_(spectrum,grid_.empty() ? nullptr : grid_.data(),bins,scale,parameters);
+          float* inverse=ws.inverse(index).data();
+          if(T_slots==1) fft.inverse(spectrum,inverse);else fft3d_->inverse(spectrum,inverse);
+          spatial_.validate_finite(inverse,spatial_samples*std::size_t(T_slots));
+        });
+        for(int index=0;index<count;++index) {
+          const int ox=(first+index)*gx.step;
+          const float* inverse=ws.inverse(index).data()+std::size_t(center)*spatial_samples;
+          const float* synthesis=h_synthesis_.data()+std::size_t(center)*spatial_samples;
+          if(center_) {
+            const int cy=gy.block/2,cx=gx.block/2;const auto k=std::size_t(cy)*gx.block+cx;
+            accum.row_ptr(oy+cy)[ox+cx]=inverse[k]*synthesis[k];
+          } else for(int y=0;y<gy.block;++y)
+            spatial_.scatter_dfttest(inverse+std::size_t(y)*gx.block,synthesis+std::size_t(y)*gx.block,accum.row_ptr(oy+y)+ox,gx.block);
         }
-      }
-    } else {
-      const int c = T_slots / 2;
-      const std::size_t bins_3d = std::size_t(T_slots) * gy.block * (gx.block / 2 + 1);
-      const std::size_t spatial_block_size = mul_size(std::size_t(gy.block),std::size_t(gx.block));
-
-      for (int by = 0; by < gy.count; ++by) {
-        const int oy = by * gy.step;
-        for (int bx_start = 0; bx_start < gx.count; ++bx_start) {
-          const int ox = bx_start * gx.step;
-
-          float* block_3d = ws.block(0).data();
-          for (int z = 0; z < T_slots; ++z) {
-            const auto pad_z = ws.padded(z);
-            const float* h_z = h_.data() + z * spatial_block_size;
-            float* blk_z = block_3d + z * spatial_block_size;
-            for (int y = 0; y < gy.block; ++y) {
-              const float* src_row = pad_z.row_ptr(oy + y) + ox;
-              float* blk_row = blk_z + y * gx.block;
-              const float* h_row = h_z + y * gx.block;
-              spatial_.gather_dfttest(src_row, h_row, blk_row, gx.block);
-            }
-          }
-
-          std::complex<float>* spec_3d = ws.spectrum(0).data();
-          fft3d_->forward(block_3d, spec_3d);
-
-          const float g_ratio = (!grid_.empty() && mean_scale_ != 0.0f && grid_[0].real() != 0.0f)
-                                    ? (mean_scale_ * spec_3d[0].real() / grid_[0].real())
-                                    : 0.0f;
-          kernel_(spec_3d, grid_.empty() ? nullptr : grid_.data(), bins_3d, g_ratio, parameters);
-
-          float* inv_3d = ws.inverse(0).data();
-          fft3d_->inverse(spec_3d, inv_3d);
-          spatial_.validate_finite(inv_3d, fft3d_->samples());
-
-          const float* inv_c = inv_3d + c * spatial_block_size;
-          const float* h_syn_c = h_synthesis_.data() + c * spatial_block_size;
-
-          if (center_) {
-            const int cy = gy.block / 2, cx = gx.block / 2;
-            const auto ci = std::size_t(cy) * gx.block + cx;
-            accum.row_ptr(oy + cy)[ox + cx] = inv_c[ci] * h_syn_c[ci];
-          } else {
-            for (int y = 0; y < gy.block; ++y) {
-              float* acc_row = accum.row_ptr(oy + y) + ox;
-              const float* inv_row = inv_c + y * gx.block;
-              const float* h_syn_row = h_syn_c + y * gx.block;
-              spatial_.scatter_dfttest(inv_row, h_syn_row, acc_row, gx.block);
-            }
-          }
-        }
+        first+=count;
       }
     }
   }

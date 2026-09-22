@@ -307,7 +307,6 @@ HWY_EXPORT(Fft3dTemporal);
 HWY_EXPORT(Target);
 HWY_EXPORT(SimdLanes);
 SpectralKernel select_spectral(int opt) {
-  require(opt == 0 || opt == 1, "unsupported opt: expected 0 or 1");
   return opt == 1 ? spectral_scalar : HWY_DYNAMIC_DISPATCH(Spectral);
 }
 const char* spectral_target(int opt) {
@@ -315,7 +314,6 @@ const char* spectral_target(int opt) {
   return opt == 1 ? "scalar" : HWY_DYNAMIC_DISPATCH(Target)();
 }
 Fft3dTemporalKernel select_fft3d_temporal(int opt) {
-  require(opt == 0 || opt == 1, "unsupported opt: expected 0 or 1");
   return opt == 1 ? fft3d_temporal_scalar : HWY_DYNAMIC_DISPATCH(Fft3dTemporal);
 }
 const char* fft3d_temporal_target(int opt) {

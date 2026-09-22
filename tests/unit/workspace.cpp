@@ -158,7 +158,7 @@ int main() {
     CHECK(pool.active_count() == 0);
     CHECK(pool.idle_count() <= pool.max_capacity());
 
-    // 5. Max capacity blocking test
+    // 5. Busy idle capacity must not block an active host request.
     WorkspacePool small_pool(budget_dft, 2);
     auto l1 = small_pool.acquire();
     auto l2 = small_pool.acquire();
@@ -171,10 +171,9 @@ int main() {
       return bool(l3);
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    CHECK(acquired_l3.load() == false);
+    CHECK(future_l3.wait_for(std::chrono::seconds(2))==std::future_status::ready);
 
-    // Release l1 to allow l3 to acquire
+    // Retention capacity limits idle objects only.
     l1.reset();
     CHECK(future_l3.get() == true);
     CHECK(acquired_l3.load() == true);
