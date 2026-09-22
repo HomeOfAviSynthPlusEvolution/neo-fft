@@ -176,7 +176,7 @@ if(NEO_FFT_BUILD_VAPOURSYNTH)
       add_test(NAME vs.dft_sampling COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/dft_sampling.py" --plugin "$<TARGET_FILE:neo_fft>")
       set_tests_properties(vs.dft_sampling PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
-      foreach(suite fft3d_models phase3_acceptance)
+      foreach(suite fft3d_models phase3_acceptance phase4_roi)
         add_test(NAME vs.${suite} COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/${suite}.py" --plugin "$<TARGET_FILE:neo_fft>")
         set_tests_properties(vs.${suite} PROPERTIES RUN_SERIAL TRUE TIMEOUT 180 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")

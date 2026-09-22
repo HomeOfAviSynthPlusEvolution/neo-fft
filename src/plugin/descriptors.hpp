@@ -149,9 +149,9 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.smin = p.number("smin", 4.0f);
   c.enhancement.smax = p.number("smax", 20.0f);
   p.boolean("measure", true);
-  p.off("interlaced");
-  for (auto n : {"l", "t", "r", "b"})
-    p.same(n, 0);
+  c.interlaced = p.boolean("interlaced", false);
+  c.left = p.integer("l", 0); c.top = p.integer("t", 0);
+  c.right = p.integer("r", 0); c.bottom = p.integer("b", 0);
   c.pframe = p.integer("pframe", 0);
   c.px = p.integer("px", 0); c.py = p.integer("py", 0);
   c.pshow = p.boolean("pshow", false);

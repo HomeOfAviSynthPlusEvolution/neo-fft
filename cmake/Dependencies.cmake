@@ -10,7 +10,7 @@ else()
 endif()
 FetchContent_Declare(dualsynth2
   GIT_REPOSITORY https://github.com/HomeOfAviSynthPlusEvolution/dualsynth2.git
-  GIT_TAG 2a24d6b4fe808692bfa10c1f9734a3c50c15774e
+  GIT_TAG f1d51bd0217d3878f995375e95c2827b4604facf
   SOURCE_SUBDIR "${_ds_subdir}")
 FetchContent_Declare(pocketfft
   GIT_REPOSITORY https://github.com/mreineck/pocketfft.git

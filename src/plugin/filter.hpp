@@ -1,5 +1,6 @@
 #pragma once
 #include "plugin/descriptors.hpp"
+#include "plugin/roi.hpp"
 #include <dualsynth/video_filter.hpp>
 #include <memory>
 #include <cstring>
@@ -13,6 +14,7 @@ struct Filter {
   struct State {
     ds::VideoInputInfo source;
     std::array<std::shared_ptr<const Plan>, 3> plans{};
+    std::array<ROI, 3> rois{};
     int temporal_size = 1;
     int pattern_frame = 0;
     bool sampled = false;
@@ -59,7 +61,8 @@ struct Filter {
       else
         return config.tbsize;
     }();
-    State state{info, {}, t_size};
+    State state;
+    state.source = info; state.temporal_size = t_size;
     state.sample_bits = ds::bits_per_sample(f.sample_format);
     for (int p = 0; p < f.plane_count; ++p)
       if (selected[p]) {
@@ -70,7 +73,10 @@ struct Filter {
           if constexpr (A == Algorithm::DFTTest) {
             state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config,state.dft_noise);
             state.dft_noise = state.plans[p]->dft_noise();
-          } else state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config);
+          } else {
+            state.rois[p] = make_roi(w,h,chroma ? f.subsampling_w : 0,chroma ? f.subsampling_h : 0,config);
+            state.plans[p] = std::make_shared<Plan>(state.rois[p].width,state.rois[p].height,sample_format,config);
+          }
         } catch (const std::exception& e) {
           throw std::invalid_argument("plane " + std::to_string(p) + ": " + e.what());
         }
@@ -128,7 +134,7 @@ struct Filter {
     return ds::Result<ds::VideoRequestResult>::success({});
   }
   template <class T>
-  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan) {
+  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi) {
     const auto de = plane_extent<T>(dst.width, dst.height, dst.stride_bytes);
     auto d = checked_plane(static_cast<T*>(static_cast<void*>(dst.data)), dst.width, dst.height, dst.stride_bytes, de);
 
@@ -141,7 +147,25 @@ struct Filter {
                                              src.width, src.height, src.stride_bytes, se));
         disjoint(checked_srcs.back().data(), se, d.data(), de);
       }
-      plan->process(span2d::Span<const span2d::Plane<const T>>(checked_srcs.data(), checked_srcs.size()), d);
+      if constexpr (A == Algorithm::FFT3D) {
+        const auto& original = checked_srcs[checked_srcs.size()/2];
+        for (int y=0;y<dst.height;++y)
+          std::memcpy(d.row_ptr(y),original.row_ptr(y),std::size_t(dst.width)*sizeof(T));
+        if (!roi.interlaced) {
+          for (auto& source : checked_srcs)
+            source = checked_subplane(source,roi.left,roi.top,roi.width,roi.height);
+          plan->process({checked_srcs.data(),checked_srcs.size()},checked_subplane(d,roi.left,roi.top,roi.width,roi.height));
+          return;
+        }
+        std::vector<PackedROI<T>> packed;
+        packed.reserve(checked_srcs.size());
+        for (auto source : checked_srcs) packed.emplace_back(source,roi);
+        std::vector<span2d::Plane<const T>> views;
+        for (auto& image : packed) views.push_back(image.view);
+        PackedROI<T> output(original,roi);
+        plan->process({views.data(),views.size()},output.view);
+        output.write(d,roi);
+      } else plan->process({checked_srcs.data(),checked_srcs.size()},d);
     } else {
       const int c = int(src_views.size()) / 2;
       const auto& src = src_views[c];
@@ -153,10 +177,14 @@ struct Filter {
         std::memcpy(d.row_ptr(y), s.row_ptr(y), std::size_t(src.width) * sizeof(T));
     }
   }
-  template<class T> static void prepare_pattern(const ds::PlaneView& src, const Plan& plan) {
+  template<class T> static void prepare_pattern(const ds::PlaneView& src, const Plan& plan, const ROI& roi) {
     const auto s = checked_plane(static_cast<const T*>(static_cast<const void*>(src.data)), src.width, src.height,
         src.stride_bytes, plane_extent<T>(src.width, src.height, src.stride_bytes));
-    plan.prepare_pattern(s);
+    if (!roi.interlaced) plan.prepare_pattern(checked_subplane(s,roi.left,roi.top,roi.width,roi.height));
+    else {
+      PackedROI<T> packed(s,roi);
+      plan.prepare_pattern(packed.view);
+    }
   }
   template<class T> static void gather_noise(const ds::PlaneView& view, const NoiseLocation& location,
                                             int S, int bits, span2d::Span<float> out, const ModelKernels& kernels) {
@@ -221,10 +249,14 @@ struct Filter {
           require(sample.frame.format == state.source.format && sample.frame.plane_count == state.source.format.plane_count,
                   "pattern frame format differs from plan");
           const auto& view = sample.frame.plane(p);
+          const bool chroma = state.source.format.color_family == ds::ColorFamily::Yuv && p > 0;
+          require(view.width == (state.source.width >> (chroma ? state.source.format.subsampling_w : 0)) &&
+                  view.height == (state.source.height >> (chroma ? state.source.format.subsampling_h : 0)),
+                  "pattern plane dimensions differ from plan");
           switch (state.source.format.sample_format) {
-            case ds::SampleFormat::UInt8: prepare_pattern<std::uint8_t>(view, *plan); break;
-            case ds::SampleFormat::Float32: prepare_pattern<float>(view, *plan); break;
-            default: prepare_pattern<std::uint16_t>(view, *plan); break;
+            case ds::SampleFormat::UInt8: prepare_pattern<std::uint8_t>(view, *plan, state.rois[p]); break;
+            case ds::SampleFormat::Float32: prepare_pattern<float>(view, *plan, state.rois[p]); break;
+            default: prepare_pattern<std::uint16_t>(view, *plan, state.rois[p]); break;
           }
         }
       }
@@ -264,15 +296,15 @@ struct Filter {
       switch (state.source.format.sample_format) {
         case ds::SampleFormat::UInt8:
           plane<std::uint8_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                              state.plans[p].get());
+                              state.plans[p].get(),state.rois[p]);
           break;
         case ds::SampleFormat::Float32:
           plane<float>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                       state.plans[p].get());
+                       state.plans[p].get(),state.rois[p]);
           break;
         default:
           plane<std::uint16_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                               state.plans[p].get());
+                               state.plans[p].get(),state.rois[p]);
           break;
       }
     }

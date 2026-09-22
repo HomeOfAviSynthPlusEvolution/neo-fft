@@ -25,6 +25,8 @@ struct FFT3DConfig {
   float pfactor = 0, pcutoff = .1f;
   int pframe = 0, px = 0, py = 0;
   bool pshow = false;
+  int left = 0, top = 0, right = 0, bottom = 0;
+  bool interlaced = false;
 };
 struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
