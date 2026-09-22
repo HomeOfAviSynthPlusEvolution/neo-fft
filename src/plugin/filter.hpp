@@ -277,13 +277,33 @@ struct Filter {
     auto d = checked_plane(static_cast<T*>(static_cast<void*>(dst.data)), dst.width, dst.height, dst.stride_bytes, de);
 
     if (plan) {
+      require(src_views.size() <= 225, "too many temporal slots");
       std::vector<span2d::Plane<const T>> checked_srcs;
       checked_srcs.reserve(src_views.size());
-      for (const auto& src : src_views) {
-        const auto se = plane_extent<T>(src.width, src.height, src.stride_bytes);
+      // A fixed open-addressed index bounds lookup even at T=15/O=14,
+      // where 225 logical slots refer to at most 29 output-neighborhood frames.
+      std::array<std::size_t,512> cache{}; // 0 is empty; otherwise slot index + 1.
+      for (std::size_t i=0;i<src_views.size();++i) {
+        const auto& src=src_views[i];
+        std::size_t slot=(reinterpret_cast<std::uintptr_t>(src.data)>>4)&(cache.size()-1);
+        bool seen=false;
+        while(cache[slot]) {
+          const auto prior_index=cache[slot]-1;
+          const auto& prior=src_views[prior_index];
+          if(src.data==prior.data && src.width==prior.width && src.height==prior.height &&
+             src.stride_bytes==prior.stride_bytes) {
+            checked_srcs.push_back(checked_srcs[prior_index]);
+            seen=true;
+            break;
+          }
+          slot=(slot+1)&(cache.size()-1);
+        }
+        if(seen) continue;
+        const auto se=plane_extent<T>(src.width,src.height,src.stride_bytes);
         checked_srcs.push_back(checked_plane(static_cast<const T*>(static_cast<const void*>(src.data)),
-                                             src.width, src.height, src.stride_bytes, se));
-        disjoint(checked_srcs.back().data(), se, d.data(), de);
+                                             src.width,src.height,src.stride_bytes,se));
+        disjoint(checked_srcs.back().data(),se,d.data(),de);
+        cache[slot]=i+1;
       }
       if constexpr (A == Algorithm::FFT3D) {
         const auto& original = checked_srcs[checked_srcs.size()/2];
