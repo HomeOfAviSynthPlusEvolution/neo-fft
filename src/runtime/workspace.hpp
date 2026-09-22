@@ -12,8 +12,9 @@ namespace neo_fft::runtime {
 
 inline constexpr std::size_t kSimdAlignment = 64;
 
-inline constexpr std::size_t align_up(std::size_t n, std::size_t alignment = kSimdAlignment) noexcept {
-  return (n + alignment - 1) & ~(alignment - 1);
+inline std::size_t align_up(std::size_t n, std::size_t alignment = kSimdAlignment) {
+  require(alignment && !(alignment & (alignment-1)), "alignment must be a power of two");
+  return add_size(n, alignment - 1) & ~(alignment - 1);
 }
 
 struct WorkspaceBudget {

@@ -19,6 +19,7 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
   const auto lanes = hn::Lanes(d);
   const auto zero = hn::Zero(d), one = hn::Set(d, 1.0f), eps = hn::Set(d, 1e-15f);
   const auto uniform_a = hn::Set(d, p.a), b = hn::Set(d, p.b), low = hn::Set(d, p.low), high = hn::Set(d, p.high);
+  auto non_finite = hn::MaskFalse(d);
   auto compute_gain = [&](auto power, std::size_t offset) {
     const auto a = p.primary_mode == PrimaryMode::Table ? hn::LoadU(d, p.primary.data() + offset) : uniform_a;
     switch (p.type) {
@@ -53,6 +54,7 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
         const auto q = hn::Add(power, eps);
         const auto num = hn::Mul(q, high);
         const auto den = hn::Mul(hn::Add(q, low), hn::Add(q, high));
+        non_finite = hn::Or(non_finite, hn::Not(hn::And(hn::IsFinite(num), hn::IsFinite(den))));
         return hn::Mul(a, hn::Sqrt(hn::Div(num, den)));
       }
       default:
@@ -63,7 +65,6 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
   // C++ explicitly permits float-array access to std::complex<float> storage.
   auto* output = reinterpret_cast<float*>(x);
   const auto* model = reinterpret_cast<const float*>(grid);
-  auto non_finite = hn::MaskFalse(d);
   auto enhance = [&](auto power, std::size_t offset) {
     const auto& e = p.enhancement;
     auto check = [&](auto v) { non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(v))); return v; };
@@ -178,95 +179,44 @@ void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std:
       hn::StoreInterleaved2(re, im, d, out_ptr + 2 * k);
     }
   } else {
-    using V = hn::Vec<decltype(d)>;
     const auto& twiddles = get_fft3d_twiddles();
-    V w_fwd_re[5][5], w_fwd_im[5][5];
-    V w_inv_re[5], w_inv_im[5];
-    for (int m = 0; m < T; ++m) {
-      for (int j = 0; j < T; ++j) {
-        w_fwd_re[m][j] = hn::Set(d, twiddles.fwd[T][m][j].real());
-        w_fwd_im[m][j] = hn::Set(d, twiddles.fwd[T][m][j].imag());
+    const float ratio = (grid && degrid != 0 && grid[0].real() != 0)
+                          ? finite(finite(degrid*spectra[c][0].real())/grid[0].real()) : 0;
+    // Accumulate each temporal frequency directly into the selective inverse.
+    // No arrays of sizeless vectors: this also compiles for SVE/RVV targets.
+    for (; bins-k >= lanes; k+=lanes) {
+      auto grid_re=zero,grid_im=zero;
+      if (grid && ratio != 0) {
+        hn::LoadInterleaved2(d,reinterpret_cast<const float*>(grid)+2*k,grid_re,grid_im);
+        grid_re=hn::Mul(hn::Mul(grid_re,hn::Set(d,ratio)),hn::Set(d,float(T)));
+        grid_im=hn::Mul(hn::Mul(grid_im,hn::Set(d,ratio)),hn::Set(d,float(T)));
       }
-      w_inv_re[m] = hn::Set(d, twiddles.inv[T][c][m].real());
-      w_inv_im[m] = hn::Set(d, twiddles.inv[T][c][m].imag());
-    }
-
-    const float g_ratio = (grid && degrid != 0.0f && grid[0].real() != 0.0f)
-                              ? finite((degrid * spectra[c][0].real()) / grid[0].real())
-                              : 0.0f;
-    const auto g_ratio_v = hn::Set(d, g_ratio);
-    const auto T_v = hn::Set(d, float(T));
-    const auto inv_T_v = hn::Set(d, 1.0f / float(T));
-
-    const auto* grid_ptr = reinterpret_cast<const float*>(grid);
-    auto* out_ptr = reinterpret_cast<float*>(out);
-
-    for (; bins - k >= lanes; k += lanes) {
-      V in_re[5], in_im[5];
-      for (int j = 0; j < T; ++j) {
-        const auto* ptr_j = reinterpret_cast<const float*>(spectra[j]);
-        hn::LoadInterleaved2(d, ptr_j + 2 * k, in_re[j], in_im[j]);
-      }
-
-      // 1D Forward DFT across T
-      V F_re[5], F_im[5];
-      for (int m = 0; m < T; ++m) {
-        auto sum_re = zero, sum_im = zero;
-        for (int j = 0; j < T; ++j) {
-          sum_re = hn::Add(sum_re, hn::Sub(hn::Mul(in_re[j], w_fwd_re[m][j]), hn::Mul(in_im[j], w_fwd_im[m][j])));
-          sum_im = hn::Add(sum_im, hn::Add(hn::Mul(in_im[j], w_fwd_re[m][j]), hn::Mul(in_re[j], w_fwd_im[m][j])));
+      auto y_re=zero,y_im=zero;
+      for(int m=0;m<T;++m) {
+        auto re=zero,im=zero;
+        for(int j=0;j<T;++j) {
+          auto in_re=zero,in_im=zero;
+          hn::LoadInterleaved2(d,reinterpret_cast<const float*>(spectra[j])+2*k,in_re,in_im);
+          const auto wr=hn::Set(d,twiddles.fwd[T][m][j].real()),wi=hn::Set(d,twiddles.fwd[T][m][j].imag());
+          re=hn::Add(re,hn::Sub(hn::Mul(in_re,wr),hn::Mul(in_im,wi)));
+          im=hn::Add(im,hn::Add(hn::Mul(in_im,wr),hn::Mul(in_re,wi)));
         }
-        F_re[m] = sum_re;
-        F_im[m] = sum_im;
+        if(m==0) {re=hn::Sub(re,grid_re);im=hn::Sub(im,grid_im);}
+        const auto power=hn::Add(hn::Mul(re,re),hn::Mul(im,im));
+        non_finite=hn::Or(non_finite,hn::Not(hn::IsFinite(power)));
+        const auto q=hn::Add(power,eps);
+        const auto power_noise=noise.mode==PrimaryMode::Table
+          ? hn::Mul(hn::LoadU(d,noise.table.data()+k),hn::Set(d,noise.multiplier)) : noise_v;
+        const auto gain=hn::Max(hn::Div(hn::Sub(q,power_noise),q),lower_v);
+        re=hn::Mul(re,gain);im=hn::Mul(im,gain);
+        if(m==0) {re=hn::Add(re,grid_re);im=hn::Add(im,grid_im);}
+        const auto wr=hn::Set(d,twiddles.inv[T][c][m].real()),wi=hn::Set(d,twiddles.inv[T][c][m].imag());
+        y_re=hn::Add(y_re,hn::Sub(hn::Mul(re,wr),hn::Mul(im,wi)));
+        y_im=hn::Add(y_im,hn::Add(hn::Mul(im,wr),hn::Mul(re,wi)));
       }
-
-      auto gridT_re = zero, gridT_im = zero;
-      if (grid && g_ratio != 0.0f) {
-        auto g_re = zero, g_im = zero;
-        hn::LoadInterleaved2(d, grid_ptr + 2 * k, g_re, g_im);
-        const auto M_re = hn::Mul(g_re, g_ratio_v);
-        const auto M_im = hn::Mul(g_im, g_ratio_v);
-        gridT_re = hn::Mul(M_re, T_v);
-        gridT_im = hn::Mul(M_im, T_v);
-      }
-
-      V R_re[5], R_im[5];
-      R_re[0] = hn::Sub(F_re[0], gridT_re);
-      R_im[0] = hn::Sub(F_im[0], gridT_im);
-      for (int m = 1; m < T; ++m) {
-        R_re[m] = F_re[m];
-        R_im[m] = F_im[m];
-      }
-
-      V R_filt_re[5], R_filt_im[5];
-      for (int m = 0; m < T; ++m) {
-        const auto power = hn::Add(hn::Mul(R_re[m], R_re[m]), hn::Mul(R_im[m], R_im[m]));
-        non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
-        const auto q = hn::Add(power, eps);
-        const auto gain = hn::Max(hn::Div(hn::Sub(q, noise.mode == PrimaryMode::Table ? hn::Mul(hn::LoadU(d, noise.table.data() + k), hn::Set(d, noise.multiplier)) : noise_v), q), lower_v);
-        non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
-        R_filt_re[m] = hn::Mul(gain, R_re[m]);
-        R_filt_im[m] = hn::Mul(gain, R_im[m]);
-      }
-
-      V F_out_re[5], F_out_im[5];
-      F_out_re[0] = hn::Add(R_filt_re[0], gridT_re);
-      F_out_im[0] = hn::Add(R_filt_im[0], gridT_im);
-      for (int m = 1; m < T; ++m) {
-        F_out_re[m] = R_filt_re[m];
-        F_out_im[m] = R_filt_im[m];
-      }
-
-      auto y_re = zero, y_im = zero;
-      for (int m = 0; m < T; ++m) {
-        y_re = hn::Add(y_re, hn::Sub(hn::Mul(F_out_re[m], w_inv_re[m]), hn::Mul(F_out_im[m], w_inv_im[m])));
-        y_im = hn::Add(y_im, hn::Add(hn::Mul(F_out_im[m], w_inv_re[m]), hn::Mul(F_out_re[m], w_inv_im[m])));
-      }
-      y_re = hn::Mul(y_re, inv_T_v);
-      y_im = hn::Mul(y_im, inv_T_v);
-
-      non_finite = hn::Or(non_finite, hn::Not(hn::And(hn::IsFinite(y_re), hn::IsFinite(y_im))));
-      hn::StoreInterleaved2(y_re, y_im, d, out_ptr + 2 * k);
+      y_re=hn::Mul(y_re,hn::Set(d,1.0f/float(T)));y_im=hn::Mul(y_im,hn::Set(d,1.0f/float(T)));
+      non_finite=hn::Or(non_finite,hn::Not(hn::And(hn::IsFinite(y_re),hn::IsFinite(y_im))));
+      hn::StoreInterleaved2(y_re,y_im,d,reinterpret_cast<float*>(out)+2*k);
     }
   }
 

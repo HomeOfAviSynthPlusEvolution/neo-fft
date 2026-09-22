@@ -15,6 +15,20 @@ def main():
     policy=environment(vs); c=vs.core;c.num_threads=4
     c.std.LoadPlugin(path=str(args.plugin.resolve()))
     src=c.std.BlankClip(width=128,height=96,format=vs.GRAY8,color=[128])
+    # A finite spectrum can overflow inside inverse FFT before normalization.
+    # Every backend must either produce finite values or reject the request.
+    impulse=c.std.BlankClip(width=64,height=64,format=vs.GRAYS,length=1)
+    def make_impulse(n,f):
+        out=f.copy();np.asarray(out[0])[0,0]=1;return out
+    impulse=c.std.ModifyFrame(impulse,clips=impulse,selector=make_impulse)
+    for opt in (0,1):
+        overflow=c.neo_fft.DFTTest(impulse,tbsize=1,sbsize=16,sosize=0,swin=7,twin=7,zmean=False,ftype=2,sigma=1e36,opt=opt)
+        try:
+            frame=overflow.get_frame(0)
+        except vs.Error as e:
+            assert 'finite' in str(e)
+        else:
+            assert np.all(np.isfinite(np.asarray(frame[0])))
     # Phase-2 temporal defaults bt=3, tbsize=3 succeed on clips with N >= 3
     c.neo_fft.FFT3D(src).get_frame(0)
     c.neo_fft.DFTTest(src).get_frame(0)

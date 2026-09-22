@@ -44,6 +44,11 @@ struct Guarded {
 };
 int main() {
   try {
+    for(int opt:{0,1}) {
+      std::vector<std::complex<float>> values(32,{1,0});
+      SpectralParams p;p.type=4;p.a=1;p.low=p.high=1e20f;
+      rejects([&]{select_spectral(opt)(values.data(),nullptr,values.size(),0,p);});
+    }
     const auto optimized = select_spectral(0);
     optimized(nullptr, nullptr, 0, 0, {});
     for (int type = -1; type <= 4; ++type)

@@ -49,13 +49,14 @@ WorkspaceBudget make_workspace_budget(const Geometry& geom, std::size_t samples,
       mul_size(mul_size(static_cast<std::size_t>(batch_size), b.bins), sizeof(std::complex<float>)), kSimdAlignment);
 
   b.accum_offset = 0;
-  b.padded_offset = b.accum_offset + accum_bytes;
-  b.row_offset = b.padded_offset + b.padded_bytes;
-  b.block_offset = b.row_offset + row_bytes;
-  b.inverse_offset = b.block_offset + block_bytes;
-  b.spectrum_offset = b.inverse_offset + inverse_bytes;
-  b.total_bytes = b.spectrum_offset + spectrum_bytes;
+  b.padded_offset = add_size(b.accum_offset, accum_bytes);
+  b.row_offset = add_size(b.padded_offset, b.padded_bytes);
+  b.block_offset = add_size(b.row_offset, row_bytes);
+  b.inverse_offset = add_size(b.block_offset, block_bytes);
+  b.spectrum_offset = add_size(b.inverse_offset, inverse_bytes);
+  b.total_bytes = add_size(b.spectrum_offset, spectrum_bytes);
 
+  require(add_size(b.total_bytes,kSimdAlignment) <= std::size_t(PTRDIFF_MAX), "workspace extent exceeds ptrdiff_t");
   return b;
 }
 
@@ -64,7 +65,7 @@ WorkspaceBudget make_workspace_budget(const Geometry& geom, const RealFFT& fft, 
 }
 
 Workspace::Workspace(const WorkspaceBudget& budget)
-    : budget_(budget), storage_(budget.total_bytes + kSimdAlignment) {
+    : budget_(budget), storage_(add_size(budget.total_bytes, kSimdAlignment)) {
   const auto raw = reinterpret_cast<std::uintptr_t>(storage_.data());
   const auto aligned = (raw + (kSimdAlignment - 1)) & ~(std::uintptr_t(kSimdAlignment - 1));
   auto* base = reinterpret_cast<std::byte*>(aligned);

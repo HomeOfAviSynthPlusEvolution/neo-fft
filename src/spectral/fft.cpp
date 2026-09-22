@@ -134,7 +134,9 @@ RealFFT3D::RealFFT3D(int depth, int height, int width, FftProfile profile)
     : depth_(dimension(depth)), height_(dimension(height)), width_(dimension(width)),
       profile_(profile), backend_(backend_by_profile(profile)) {
   require(fft_profile_supported(profile), "FFT profile is not supported by current CPU");
-  plane_extent<float>(width_, height_ * depth_, static_cast<std::ptrdiff_t>(mul_size(width_, sizeof(float))));
+  plane_extent<float>(width_, std::int64_t(height_) * depth_, static_cast<std::ptrdiff_t>(mul_size(width_, sizeof(float))));
+  plane_extent<std::complex<float>>(columns(),std::int64_t(height_)*depth_,
+      static_cast<std::ptrdiff_t>(mul_size(columns(),sizeof(std::complex<float>))));
 }
 
 void RealFFT3D::forward(const float* in, std::complex<float>* out) const {

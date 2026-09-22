@@ -11,30 +11,24 @@ WorkspacePool::WorkspacePool(WorkspaceBudget budget, std::size_t max_capacity)
 
 WorkspaceLease WorkspacePool::acquire() {
   std::unique_lock<std::mutex> lock(mutex_);
+  cv_.wait(lock, [this] { return !idle_.empty() || active_count_ < max_capacity_; });
   if (!idle_.empty()) {
     auto ws = std::move(idle_.back());
     idle_.pop_back();
     ++active_count_;
     return WorkspaceLease(this, std::move(ws));
   }
-  if (active_count_ < max_capacity_) {
-    ++active_count_;
-    lock.unlock();
-    try {
-      auto ws = std::make_unique<Workspace>(budget_);
-      return WorkspaceLease(this, std::move(ws));
-    } catch (...) {
-      lock.lock();
-      --active_count_;
-      cv_.notify_one();
-      throw;
-    }
-  }
-  cv_.wait(lock, [this] { return !idle_.empty(); });
-  auto ws = std::move(idle_.back());
-  idle_.pop_back();
   ++active_count_;
-  return WorkspaceLease(this, std::move(ws));
+  lock.unlock();
+  try {
+    auto ws = std::make_unique<Workspace>(budget_);
+    return WorkspaceLease(this, std::move(ws));
+  } catch (...) {
+    lock.lock();
+    --active_count_;
+    cv_.notify_one();
+    throw;
+  }
 }
 
 void WorkspacePool::release(std::unique_ptr<Workspace> ws) noexcept {

@@ -6,8 +6,8 @@
 namespace neo_fft {
 
 inline int reflect(int j, int L) noexcept {
-  if (j < 0) return -j;
-  if (j >= L) return 2 * L - 2 - j;
+  if (j < 0) return static_cast<int>(-std::int64_t(j));
+  if (j >= L) return static_cast<int>(2LL * L - 2 - j);
   return j;
 }
 

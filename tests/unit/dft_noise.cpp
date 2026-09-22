@@ -44,6 +44,11 @@ int main() { try {
   DFTNoise retry(c);
   rejects([&]{retry.prepare([](const NoiseLocation&,int,span2d::Span<float> out){std::fill(out.begin(),out.end(),NAN);});});
   CHECK(!retry.power());
+  rejects([&]{retry.prepare([](const NoiseLocation&,int z,span2d::Span<float> out){
+    if(z==1)throw std::runtime_error("simulated upstream sample error");
+    std::fill(out.begin(),out.end(),10);
+  });});
+  CHECK(!retry.power());
   retry.prepare([](const NoiseLocation&,int,span2d::Span<float> out){std::fill(out.begin(),out.end(),1);});CHECK(retry.power());
   // Exact declared closure remains identical before and after publication.
   using F=plugin::Filter<Algorithm::DFTTest>;
@@ -56,6 +61,20 @@ int main() { try {
     std::vector<ds::VideoFrameRequest> requests;ds::VideoRequestContext ctx{6,requests,{},&state};F::request(ctx);
     std::set<int> actual;for(auto r:requests)actual.insert(r.frame_number);
     CHECK(actual==std::set<int>({0,1,2,5,6,7,10,11,12}));CHECK(requests.size()==actual.size());
+  }
+  using FFT=plugin::Filter<Algorithm::FFT3D>;
+  FFT3DConfig fc;fc.bw=fc.bh=4;fc.bt=4;fc.pfactor=1;fc.px=fc.py=1;
+  FFT::State fs{};fs.source.num_frames=9;fs.temporal_size=4;fs.sampled=true;fs.pattern_frame=8;
+  auto fp=std::make_shared<Plan>(20,20,SampleFormat{8,false,false},fc);fs.plans[0]=fp;
+  std::vector<std::uint8_t> pixels(400,64);
+  for(bool warm:{false,true}) {
+    if(warm)fp->prepare_pattern({pixels.data(),20,20,20});
+    for(int n:{0,4,8}) {
+      std::vector<ds::VideoFrameRequest> requests;ds::VideoRequestContext ctx{n,requests,{},&fs};FFT::request(ctx);
+      std::set<int> actual;for(auto r:requests)actual.insert(r.frame_number);
+      const auto want=n==4 ? std::set<int>{2,3,4,5,8} : std::set<int>{n,8};
+      CHECK(actual==want);CHECK(requests.size()==actual.size());
+    }
   }
   std::cout<<"DFT noise direct DFT, independent windows, publication and dependencies passed\n";
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;} }

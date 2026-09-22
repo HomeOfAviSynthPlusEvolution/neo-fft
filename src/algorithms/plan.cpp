@@ -121,6 +121,9 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
   if (preview_ || needs_pattern_frame()) {
     if (px_ == 0 && py_ == 0) require(geometry.x.count >= 5 && geometry.y.count >= 5, "FFT3D automatic pattern search requires a 5x5 grid");
     else require(px_ < geometry.x.count && py_ < geometry.y.count, "FFT3D pattern coordinates outside grid");
+    // Sampling weights, private power and a simultaneously published model.
+    require(add_size(pool_.budget().total_bytes,mul_size(fft.bins(),3*sizeof(float))) <= std::size_t(PTRDIFF_MAX),
+            "FFT3D sampled working set exceeds ptrdiff_t");
     sample_weights_ = buffer<float>(fft.bins());
     const float cutoff2 = finite(c.pcutoff * c.pcutoff);
     require(cutoff2 > 0, "FFT3D pattern cutoff underflow");
@@ -163,7 +166,11 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
   for (std::size_t i = 0; i < h_.size(); ++i)
     h_synthesis_[i] = h_[i] * volume;
   const bool sampled = c.ftype < 2 && !c.locations.empty();
-  if (sampled) dft_noise_ = noise ? std::move(noise) : std::make_shared<DFTNoise>(c);
+  if (sampled) {
+    dft_noise_ = noise ? std::move(noise) : std::make_shared<DFTNoise>(c);
+    require(add_size(pool_.budget().total_bytes,dft_noise_->working_set_bytes()) <= std::size_t(PTRDIFF_MAX),
+            "DFTTest sampled working set exceeds ptrdiff_t");
+  }
   const float scale = c.ftype < 2 ? win.wscale : 1.0f;
   params_ = {c.ftype,
              !sampled && c.curves.empty() ? finite(c.sigma / scale) : 0,
@@ -318,6 +325,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
         ws.block()[std::size_t(y)*gx.block+x] = finite(finite(float(sources[0].row_ptr(reflect(oy+y,gy))[reflect(ox+x,gx)]))-base);
     fft.forward(ws.block().data(), ws.spectrum().data());
     fft.inverse(ws.spectrum().data(), ws.inverse().data());
+    for(float v:ws.inverse()) finite(v);
     for (int y = 0; y < gy.block; ++y)
       for (int x = 0; x < gx.block; ++x)
         accum.row_ptr(oy+y)[ox+x] = ws.inverse()[std::size_t(y)*gx.block+x];
@@ -359,6 +367,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
             if (parameters.primary_mode == PrimaryMode::Table) enhance(spec_b);
           } else enhance(spec_b);
           fft.inverse(spec_b, ws.inverse(0).data());
+          for(std::size_t i=0;i<fft.samples();++i) finite(ws.inverse(0)[i]);
 
           const float* inv_b = ws.inverse(0).data();
           for (int y = 0; y < gy.block; ++y) {
@@ -389,6 +398,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           float* inv_buf = ws.inverse(0).data();
           enhance(out_spectrum);
           fft.inverse(out_spectrum, inv_buf);
+          for(std::size_t i=0;i<fft.samples();++i) finite(inv_buf[i]);
 
           for (int y = 0; y < gy.block; ++y) {
             float* r_row = row.row_ptr(y) + ox;
@@ -428,6 +438,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           const float scale = grid_.empty() ? 0 : (mean_scale_ * spec_b[0].real()) / grid_[0].real();
           kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, parameters);
           fft.inverse(spec_b, ws.inverse(0).data());
+          for(std::size_t i=0;i<fft.samples();++i) finite(ws.inverse(0)[i]);
 
           if (center_) {
             const int cy = gy.block / 2, cx = gx.block / 2;
@@ -447,7 +458,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     } else {
       const int c = T_slots / 2;
       const std::size_t bins_3d = std::size_t(T_slots) * gy.block * (gx.block / 2 + 1);
-      const int spatial_block_size = gy.block * gx.block;
+      const std::size_t spatial_block_size = mul_size(std::size_t(gy.block),std::size_t(gx.block));
 
       for (int by = 0; by < gy.count; ++by) {
         const int oy = by * gy.step;
@@ -477,6 +488,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
 
           float* inv_3d = ws.inverse(0).data();
           fft3d_->inverse(spec_3d, inv_3d);
+          for(std::size_t i=0;i<fft3d_->samples();++i) finite(inv_3d[i]);
 
           const float* inv_c = inv_3d + c * spatial_block_size;
           const float* h_syn_c = h_synthesis_.data() + c * spatial_block_size;
@@ -498,6 +510,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     }
   }
 
+  for(int y=0;y<gy.cover;++y) for(int x=0;x<gx.cover;++x) finite(accum.row_ptr(y)[x]);
   if constexpr (std::is_same_v<T, float>) {
     const float scale = algorithm == Algorithm::FFT3D ? 1.0f : 1.0f / 255.0f;
     for (int y = 0; y < dst.height(); ++y) {

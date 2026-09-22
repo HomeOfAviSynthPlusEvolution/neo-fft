@@ -6,6 +6,10 @@ DFTNoise::DFTNoise(const DFTConfig& c)
     : locations(c.locations), temporal_size(c.tbsize), block_size(c.block),
       fft_(c.tbsize,c.block,c.block), zmean_(c.zmean) {
   validate(c);
+  // Window/input plus grid/spectrum and private/published real power tables.
+  working_set_bytes_ = add_size(mul_size(fft_.samples(),2*sizeof(float)),
+                               mul_size(fft_.bins(),2*sizeof(std::complex<float>)+2*sizeof(float)));
+  require(working_set_bytes_ <= std::size_t(PTRDIFF_MAX), "DFTTest model extent exceeds ptrdiff_t");
   require(c.ftype < 2 && !locations.empty(), "inactive DFTTest sample model");
   auto sample = dft_window_3d(c.tbsize,c.block,0,0,c.swin,c.twin,c.sbeta,c.tbeta);
   const auto output = dft_window_3d(c.tbsize,c.block,c.mode == 0 ? 0 : c.overlap,c.mode,c.swin,c.twin,c.sbeta,c.tbeta);

@@ -16,8 +16,10 @@ public:
   runtime::PublishedModel::Model power() const { return model_.get(); }
   const std::vector<NoiseLocation> locations;
   const int temporal_size, block_size;
+  std::size_t working_set_bytes() const { return working_set_bytes_; }
 private:
   RealFFT3D fft_;
+  std::size_t working_set_bytes_;
   std::vector<float> window_;
   std::vector<std::complex<float>> grid_;
   float calibration_;

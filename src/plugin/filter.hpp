@@ -17,6 +17,7 @@ struct Filter {
     int pattern_frame = 0;
     bool sampled = false;
     std::shared_ptr<const DFTNoise> dft_noise;
+    int sample_bits = 8;
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
     require(ctx.params && ctx.inputs.size() == 1, "missing clip or parameters");
@@ -59,12 +60,13 @@ struct Filter {
         return config.tbsize;
     }();
     State state{info, {}, t_size};
+    state.sample_bits = ds::bits_per_sample(f.sample_format);
     for (int p = 0; p < f.plane_count; ++p)
       if (selected[p]) {
         try {
           const bool chroma = f.color_family == ds::ColorFamily::Yuv && p > 0;
           const int w = info.width >> (chroma ? f.subsampling_w : 0), h = info.height >> (chroma ? f.subsampling_h : 0);
-          const SampleFormat sample_format{ds::bits_per_sample(f.sample_format),f.sample_format == ds::SampleFormat::Float32,chroma};
+          const SampleFormat sample_format{state.sample_bits,f.sample_format == ds::SampleFormat::Float32,chroma};
           if constexpr (A == Algorithm::DFTTest) {
             state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config,state.dft_noise);
             state.dft_noise = state.plans[p]->dft_noise();
@@ -238,7 +240,7 @@ struct Filter {
         const bool chroma=state.source.format.color_family==ds::ColorFamily::Yuv && location.plane>0;
         require(view.width==(state.source.width >> (chroma ? state.source.format.subsampling_w : 0)) &&
                 view.height==(state.source.height >> (chroma ? state.source.format.subsampling_h : 0)), "sample plane dimensions differ from plan");
-        const int S=state.dft_noise->block_size, bits=ds::bits_per_sample(state.source.format.sample_format);
+        const int S=state.dft_noise->block_size, bits=state.sample_bits;
         switch (state.source.format.sample_format) {
           case ds::SampleFormat::UInt8: gather_noise<std::uint8_t>(view,location,S,bits,out); break;
           case ds::SampleFormat::Float32: gather_noise<float>(view,location,S,bits,out); break;

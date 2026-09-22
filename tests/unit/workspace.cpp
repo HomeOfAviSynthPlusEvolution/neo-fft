@@ -38,6 +38,16 @@ int main() {
     CHECK(budget_dft.row_height == 0);
     CHECK(budget_dft.row_stride_bytes == 0);
 
+    CHECK(reflect(1073741825,1073741825)==1073741823);
+    if constexpr(sizeof(std::size_t)==8) {
+      constexpr int L=1073741792;
+      Geometry enormous(dft_axis(L,16,1,0),dft_axis(L,16,1,0));
+      rejects([&]{make_workspace_budget(enormous,3*16*16,3*16*9,false,3,1);});
+    }
+    rejects([&]{align_up(SIZE_MAX);});
+    rejects([&]{make_workspace_budget(geom,SIZE_MAX/4,1,false,1,1);});
+    rejects([&]{make_workspace_budget(geom,1,SIZE_MAX/8,false,1,1);});
+
     // 2. Workspace SIMD 64-byte alignment and span2d views
     Workspace ws(budget_fft3d);
     CHECK(reinterpret_cast<std::uintptr_t>(ws.accum().data()) % kSimdAlignment == 0);

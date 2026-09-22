@@ -5,6 +5,16 @@
 using namespace neo_fft;
 int main() {
   try {
+    rejects([]{RealFFT3D too_tall(65537,65537,1,FftProfile::scalar);});
+    // Churn more than 16 cached lengths, then repeat; eviction must retain
+    // shared plans while in use and return valid newly reconstructed plans.
+    for(int pass=0;pass<2;++pass) for(int width=17;width<50;++width) {
+      RealFFT fft(1,width,FftProfile::scalar);
+      std::vector<float> input(width),output(width);input[1]=1;
+      std::vector<std::complex<float>> bins(fft.bins());
+      fft.forward(input.data(),bins.data());fft.inverse(bins.data(),output.data());
+      for(int i=0;i<width;++i)check_near(output[i],input[i],2e-6);
+    }
     std::uint16_t a[24]{};
     auto p = checked_plane(a, 5, 3, 16, 42);
     CHECK(p.stride() == 8 && p.stride_bytes() == 16);

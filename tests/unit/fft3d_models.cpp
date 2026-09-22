@@ -49,6 +49,18 @@ int main() {
         }
       }
     }
+    // Degenerate/zero enhancement controls use their specified inactive paths.
+    {
+      EnhancementConfig c;c.sharpen=1;c.smin=c.smax=0;c.svr=0;c.ht=0;c.dehalo=1;
+      auto tables=enhancement_tables(5,5,1,c);
+      auto p=SpectralParams{};p.type=-2;p.enhancement=tables.view(c);
+      std::vector<std::complex<float>> spectrum(15,{2,3});
+      for(int opt:{0,1}) {
+        auto result=spectrum;select_spectral(opt)(result.data(),nullptr,result.size(),0,p);
+        for(auto v:result)CHECK(std::isfinite(v.real())&&std::isfinite(v.imag()));
+      }
+      c.hr=1e20f;rejects([&]{enhancement_tables(5,5,1,c);});
+    }
     // Temporal table broadcast uses T*P, independently evaluated with a direct DFT.
     for (int T = 1; T <= 5; ++T) for (int opt : {0,1}) {
       constexpr int bins = 17;
@@ -120,6 +132,25 @@ int main() {
       sampled.bw=sampled.bh=8; sampled.pshow=false;
       rejects([&]{Plan p(13,13,{8,false,false},sampled);});
       sampled.bt=-1; Plan inactive_sample(13,13,{8,false,false},sampled);
+    }
+    // Search excludes border blocks and starts from an actual candidate, even
+    // when every interior score exceeds the legacy 1e15 sentinel.
+    {
+      FFT3DConfig c;c.bw=c.bh=4;c.ow=c.oh=0;c.pfactor=1;c.degrid=0;
+      Plan automatic(20,20,{32,true,false},c);
+      std::vector<float> src(400,0);
+      for(int y=4;y<16;++y)for(int x=4;x<16;++x)
+        src[y*20+x]=(x>=8 && x<12 && y>=12 ? 1e8f : 3e8f)*float((x+y)%2 ? 1 : -1);
+      const span2d::Plane<const float> view{src.data(),20,20,80};
+      automatic.prepare_pattern(view);
+      c.px=3;c.py=4;Plan chosen(20,20,{32,true,false},c);chosen.prepare_pattern(view);
+      CHECK(*automatic.pattern_power()==*chosen.pattern_power());
+      CHECK((*automatic.pattern_power())[8]>1e15f);
+      FFT3DConfig minimum=c;minimum.px=minimum.py=0;
+      Plan smallest(12,12,{32,true,false},minimum);
+      std::vector<float> small(144,1);smallest.prepare_pattern({small.data(),12,12,48});
+      CHECK(smallest.pattern_ready());
+      c.px=6;c.py=6;Plan edge(20,20,{32,true,false},c);edge.prepare_pattern(view);
     }
     FFT3DConfig c; c.bt = -1; c.sigma = 1e30f;
     Plan identity(64, 64, {8, false, false}, c);

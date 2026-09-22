@@ -176,6 +176,11 @@ if(NEO_FFT_BUILD_VAPOURSYNTH)
       add_test(NAME vs.dft_sampling COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/dft_sampling.py" --plugin "$<TARGET_FILE:neo_fft>")
       set_tests_properties(vs.dft_sampling PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
+      foreach(suite fft3d_models phase3_acceptance)
+        add_test(NAME vs.${suite} COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/${suite}.py" --plugin "$<TARGET_FILE:neo_fft>")
+        set_tests_properties(vs.${suite} PROPERTIES RUN_SERIAL TRUE TIMEOUT 180 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
+      endforeach()
       add_test(NAME harness.protocol COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential/test_protocol.py")
       set_tests_properties(harness.protocol PROPERTIES LABELS "spec")
@@ -193,7 +198,7 @@ if(BUILD_TESTING)
   add_test(NAME core.fft3d_models COMMAND neo_fft_fft3d_model_tests)
 
   add_executable(neo_fft_dft_noise_tests tests/unit/dft_noise.cpp)
-  target_link_libraries(neo_fft_dft_noise_tests PRIVATE neo_fft_core DualSynth::dualsynth)
+  target_link_libraries(neo_fft_dft_noise_tests PRIVATE neo_fft_core)
   add_test(NAME core.dft_noise COMMAND neo_fft_dft_noise_tests)
 
   add_executable(neo_fft_profile_tests tests/unit/profiles.cpp)
@@ -202,7 +207,7 @@ if(BUILD_TESTING)
   set_tests_properties(core.profiles PROPERTIES LABELS "spec")
 
   add_executable(neo_fft_algorithm_tests tests/unit/algorithms.cpp)
-  target_link_libraries(neo_fft_algorithm_tests PRIVATE neo_fft_core DualSynth::dualsynth)
+  target_link_libraries(neo_fft_algorithm_tests PRIVATE neo_fft_core)
   add_test(NAME core.algorithms COMMAND neo_fft_algorithm_tests)
   set_tests_properties(core.algorithms PROPERTIES LABELS "spec")
 

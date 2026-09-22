@@ -1,4 +1,5 @@
 #include "spectral/fft_backend.hpp"
+#include "base/checked.hpp"
 #include "spectral/codelets/fft16x16.hpp"
 #include "spectral/codelets/fft8x8.hpp"
 #include "spectral/codelets/fft32x32.hpp"
@@ -199,19 +200,19 @@ namespace POCKETFFT_NAMESPACE::detail {
 template <typename T>
 inline std::shared_ptr<T> get_plan_persistent(size_t length) {
   static std::mutex mut;
-  static std::unordered_map<size_t, std::shared_ptr<T>> cache;
+  static std::array<std::pair<size_t,std::shared_ptr<T>>,POCKETFFT_CACHE_SIZE> cache{};
+  static size_t next=0;
   {
     std::lock_guard<std::mutex> lock(mut);
-    auto it = cache.find(length);
-    if (it != cache.end()) {
-      return it->second;
-    }
+    for(const auto& entry:cache) if(entry.first==length && entry.second) return entry.second;
   }
   SuspendScratchScope suspend;
   auto plan = std::make_shared<T>(length);
   {
     std::lock_guard<std::mutex> lock(mut);
-    cache.emplace(length, plan);
+    for(const auto& entry:cache) if(entry.first==length && entry.second) return entry.second;
+    cache[next]={length,plan};
+    next=(next+1)%cache.size();
   }
   return plan;
 }
@@ -362,6 +363,11 @@ void batch_c2r(std::size_t batch, int height, int width, const std::complex<floa
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
 
+inline std::ptrdiff_t checked_stride(int rows,int columns,std::size_t bytes) {
+  const auto result=mul_size(mul_size(std::size_t(rows),std::size_t(columns)),bytes);
+  require(result<=std::size_t(PTRDIFF_MAX),"FFT stride exceeds ptrdiff_t");
+  return static_cast<std::ptrdiff_t>(result);
+}
 inline void ensure_plans_3d(int depth, int height, int width) {
   ensure_plans(height, width);
   pf::detail::get_plan<pf::detail::pocketfft_r<float>>(std::size_t(depth));
@@ -373,8 +379,8 @@ void r2c_3d(int depth, int height, int width, const float* in, std::complex<floa
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{0, 1, 2};
-  const pf::stride_t rs{std::ptrdiff_t(height * width * sizeof(float)), std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
-  const pf::stride_t ss{std::ptrdiff_t(height * k * sizeof(std::complex<float>)), std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+  const pf::stride_t rs{checked_stride(height,width,sizeof(float)), std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
+  const pf::stride_t ss{checked_stride(height,k,sizeof(std::complex<float>)), std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
   pf::r2c(shape, rs, ss, axes, true, in, out, 1.0f, 1);
 }
 
@@ -383,8 +389,8 @@ void c2r_3d(int depth, int height, int width, const std::complex<float>* in, flo
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{0, 1, 2};
-  const pf::stride_t rs{std::ptrdiff_t(height * width * sizeof(float)), std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
-  const pf::stride_t ss{std::ptrdiff_t(height * k * sizeof(std::complex<float>)), std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+  const pf::stride_t rs{checked_stride(height,width,sizeof(float)), std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
+  const pf::stride_t ss{checked_stride(height,k,sizeof(std::complex<float>)), std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
 
@@ -400,10 +406,10 @@ void batch_r2c_3d(std::size_t batch, int depth, int height, int width, const flo
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{batch, std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{1, 2, 3};
-  const pf::stride_t rs{std::ptrdiff_t(in_dist * sizeof(float)), std::ptrdiff_t(height * width * sizeof(float)),
+  const pf::stride_t rs{std::ptrdiff_t(in_dist * sizeof(float)), checked_stride(height,width,sizeof(float)),
                         std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
   const pf::stride_t ss{std::ptrdiff_t(out_dist * sizeof(std::complex<float>)),
-                        std::ptrdiff_t(height * k * sizeof(std::complex<float>)),
+                        checked_stride(height,k,sizeof(std::complex<float>)),
                         std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
   pf::r2c(shape, rs, ss, axes, true, in, out, 1.0f, 1);
 }
@@ -420,10 +426,10 @@ void batch_c2r_3d(std::size_t batch, int depth, int height, int width, const std
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{batch, std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{1, 2, 3};
-  const pf::stride_t rs{std::ptrdiff_t(out_dist * sizeof(float)), std::ptrdiff_t(height * width * sizeof(float)),
+  const pf::stride_t rs{std::ptrdiff_t(out_dist * sizeof(float)), checked_stride(height,width,sizeof(float)),
                         std::ptrdiff_t(width * sizeof(float)), sizeof(float)};
   const pf::stride_t ss{std::ptrdiff_t(in_dist * sizeof(std::complex<float>)),
-                        std::ptrdiff_t(height * k * sizeof(std::complex<float>)),
+                        checked_stride(height,k,sizeof(std::complex<float>)),
                         std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
