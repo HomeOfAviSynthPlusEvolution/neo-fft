@@ -3,6 +3,7 @@
 #include "algorithms/plan.hpp"
 #include "algorithms/pad.hpp"
 #include "kernels/spectral.hpp"
+#include <cstdint>
 #include <cstring>
 #include <type_traits>
 
@@ -351,18 +352,19 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   checked_plane(dst.data(), dst.width(), dst.height(), dst.stride_bytes(), de);
   // Endpoint clamps and overlapping temporal blocks reuse identical immutable
   // planes. Validate each physical view once, retaining all logical FFT slots.
-  std::array<std::size_t, 225> unique{};
-  std::size_t unique_count = 0;
+  std::array<std::size_t, 512> unique{}; // Open-addressed slot index + 1.
   for (std::size_t j = 0; j < sources.size(); ++j) {
     const auto& src = sources[j];
     require(src.width() == gx.length && src.height() == gy.length, "frame dimensions differ from plan");
+    std::size_t slot=(reinterpret_cast<std::uintptr_t>(src.data())>>4)&(unique.size()-1);
     bool seen = false;
-    for (std::size_t k = 0; k < unique_count; ++k) {
-      const auto& previous = sources[unique[k]];
+    while(unique[slot]) {
+      const auto& previous = sources[unique[slot]-1];
       if (src.data() == previous.data() && src.stride_bytes() == previous.stride_bytes()) {
         seen = true;
         break;
       }
+      slot=(slot+1)&(unique.size()-1);
     }
     if (seen) continue;
     const auto se = plane_extent<T>(src.width(), src.height(), src.stride_bytes());
@@ -372,7 +374,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
       for (int y = 0; !preview_ && !kalman && y < src.height(); ++y)
         spatial_.validate_finite(src.row_ptr(y), std::size_t(src.width()));
     }
-    unique[unique_count++] = j;
+    unique[slot] = j+1;
   }
 
   auto parameters = params_;
