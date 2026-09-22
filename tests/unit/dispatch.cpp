@@ -64,6 +64,10 @@ int main() {
               p.primary_mode = PrimaryMode::Table;
               p.primary = {primary, count};
             }
+            // Enhancement windows share the guarded table boundary, including odd tails.
+            if (type == -1 && table) {
+              p.enhancement = {.4f, .2f, 16, 400, 2500, {primary, count}, {primary, count}};
+            }
             spectral_scalar(expected.data(), mean ? grid.data : nullptr, count, .5f, p);
             optimized(samples.data, mean ? grid.data : nullptr, count, .5f, p);
             CHECK(std::memcmp(grid.data, original_grid.data(), count * sizeof(std::complex<float>)) == 0);

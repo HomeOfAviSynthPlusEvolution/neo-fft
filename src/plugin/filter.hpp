@@ -45,7 +45,7 @@ struct Filter {
     }
     const int t_size = [&] {
       if constexpr (A == Algorithm::FFT3D)
-        return config.bt;
+        return std::max(1, config.bt);
       else
         return config.tbsize;
     }();

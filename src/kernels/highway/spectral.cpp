@@ -11,6 +11,8 @@ namespace hn = hwy::HWY_NAMESPACE;
 void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
               const SpectralParams& p) {
   require(p.primary_mode != PrimaryMode::Table || p.primary.size() == count, "primary table shape mismatch");
+  require(!p.enhancement.sharpen || p.enhancement.sharpen_window.size() == count, "sharpen table shape mismatch");
+  require(!p.enhancement.dehalo || p.enhancement.halo_window.size() == count, "halo table shape mismatch");
   const hn::ScalableTag<float> d;
   if (!count)
     return;
@@ -20,6 +22,8 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
   auto compute_gain = [&](auto power, std::size_t offset) {
     const auto a = p.primary_mode == PrimaryMode::Table ? hn::LoadU(d, p.primary.data() + offset) : uniform_a;
     switch (p.type) {
+      case -2:
+        return one;
       case -1: {
         const auto q = hn::Add(power, eps);
         return hn::Max(hn::Div(hn::Sub(q, a), q), hn::Set(d, p.floor));
@@ -60,6 +64,24 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
   auto* output = reinterpret_cast<float*>(x);
   const auto* model = reinterpret_cast<const float*>(grid);
   auto non_finite = hn::MaskFalse(d);
+  auto enhance = [&](auto power, std::size_t offset) {
+    const auto& e = p.enhancement;
+    auto check = [&](auto v) { non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(v))); return v; };
+    auto gain = one;
+    const auto q = check(hn::Add(power, eps));
+    if (e.sharpen != 0 && e.b != 0) {
+      const auto num = check(hn::Mul(q, hn::Set(d, e.b)));
+      const auto den = check(hn::Mul(check(hn::Add(q, hn::Set(d, e.a))), check(hn::Add(q, hn::Set(d, e.b)))));
+      const auto strength = check(hn::Mul(hn::Set(d, e.sharpen), hn::LoadU(d, e.sharpen_window.data() + offset)));
+      gain = check(hn::Add(one, check(hn::Mul(strength, check(hn::Sqrt(check(hn::Div(num, den))))))));
+    }
+    if (e.dehalo != 0) {
+      const auto qc = check(hn::Add(q, hn::Set(d, e.c)));
+      const auto suppression = check(hn::Mul(check(hn::Mul(hn::Set(d, e.dehalo), hn::LoadU(d, e.halo_window.data() + offset))), q));
+      gain = check(hn::Mul(gain, check(hn::Div(qc, check(hn::Add(qc, suppression))))));
+    }
+    return gain;
+  };
   std::size_t k = 0;
   if (!grid) {
     for (; count - k >= lanes; k += lanes) {
@@ -67,7 +89,8 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
       hn::LoadInterleaved2(d, output + 2 * k, re, im);
       const auto power = hn::Add(hn::Mul(re, re), hn::Mul(im, im));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
-      const auto gain = compute_gain(power, k);
+      auto gain = compute_gain(power, k);
+      if (p.enhancement.active()) gain = hn::Mul(gain, enhance(power, k));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Mul(gain, re);
       im = hn::Mul(gain, im);
@@ -86,7 +109,8 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
       im = hn::Sub(im, mi);
       const auto power = hn::Add(hn::Mul(re, re), hn::Mul(im, im));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
-      const auto gain = compute_gain(power, k);
+      auto gain = compute_gain(power, k);
+      if (p.enhancement.active()) gain = hn::Mul(gain, enhance(power, k));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Add(hn::Mul(gain, re), mr);
       im = hn::Add(hn::Mul(gain, im), mi);
@@ -99,12 +123,15 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
   auto tail = p;
   if (p.primary_mode == PrimaryMode::Table)
     tail.primary = {p.primary.data() + k, count - k};
+  if (p.enhancement.sharpen) tail.enhancement.sharpen_window = {p.enhancement.sharpen_window.data() + k, count - k};
+  if (p.enhancement.dehalo) tail.enhancement.halo_window = {p.enhancement.halo_window.data() + k, count - k};
   spectral_scalar(x + k, grid ? grid + k : nullptr, count - k, scale, tail);
 }
 
 void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
-                   float degrid, const std::complex<float>* grid, float noise, float lower,
+                   float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                    std::complex<float>* out) {
+  require(noise.mode != PrimaryMode::Table || noise.table.size() == bins, "noise table shape mismatch");
   require(T >= 1 && T <= 5, "FFT3D invalid T");
   require(c >= 0 && c < T, "FFT3D invalid c");
   if (!bins)
@@ -113,7 +140,7 @@ void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std:
   const hn::ScalableTag<float> d;
   const auto lanes = hn::Lanes(d);
   const auto zero = hn::Zero(d), eps = hn::Set(d, 1e-15f);
-  const auto noise_v = hn::Set(d, noise), lower_v = hn::Set(d, lower);
+  const auto noise_v = hn::Set(d, noise.uniform), lower_v = hn::Set(d, lower);
   auto non_finite = hn::MaskFalse(d);
 
   std::size_t k = 0;
@@ -138,7 +165,7 @@ void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std:
       const auto power = hn::Add(hn::Mul(re, re), hn::Mul(im, im));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
       const auto q = hn::Add(power, eps);
-      const auto gain = hn::Max(hn::Div(hn::Sub(q, noise_v), q), lower_v);
+      const auto gain = hn::Max(hn::Div(hn::Sub(q, noise.mode == PrimaryMode::Table ? hn::Mul(hn::LoadU(d, noise.table.data() + k), hn::Set(d, noise.multiplier)) : noise_v), q), lower_v);
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       if (grid && mr_scale != 0.0f) {
         re = hn::Add(hn::Mul(gain, re), mr);
@@ -216,7 +243,7 @@ void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std:
         const auto power = hn::Add(hn::Mul(R_re[m], R_re[m]), hn::Mul(R_im[m], R_im[m]));
         non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
         const auto q = hn::Add(power, eps);
-        const auto gain = hn::Max(hn::Div(hn::Sub(q, noise_v), q), lower_v);
+        const auto gain = hn::Max(hn::Div(hn::Sub(q, noise.mode == PrimaryMode::Table ? hn::Mul(hn::LoadU(d, noise.table.data() + k), hn::Set(d, noise.multiplier)) : noise_v), q), lower_v);
         non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
         R_filt_re[m] = hn::Mul(gain, R_re[m]);
         R_filt_im[m] = hn::Mul(gain, R_im[m]);
@@ -258,7 +285,7 @@ void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std:
         const float im = finite(spectra[0][k].imag() - mi);
         const float power = finite(re * re + im * im);
         const float q = power + 1e-15f;
-        const float gain = std::max((q - noise) / q, lower);
+        const float gain = std::max((q - noise.at(k)) / q, lower);
         out[k] = {finite(gain * re + mr), finite(gain * im + mi)};
       }
     } else {
@@ -292,7 +319,7 @@ void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std:
         for (int m = 0; m < T; ++m) {
           const float power = finite(R[m].real() * R[m].real() + R[m].imag() * R[m].imag());
           const float q = power + 1e-15f;
-          const float gain = std::max((q - noise) / q, lower);
+          const float gain = std::max((q - noise.at(k)) / q, lower);
           R_filtered[m] = gain * R[m];
         }
 

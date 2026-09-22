@@ -3,6 +3,19 @@
 
 namespace neo_fft {
 enum class PrimaryMode { Uniform, Table };
+struct NoisePower {
+  float uniform = 0, multiplier = 1;
+  PrimaryMode mode = PrimaryMode::Uniform;
+  span2d::Span<const float> table{};
+  NoisePower(float value = 0) : uniform(value) {}
+  float at(std::size_t k) const { return mode == PrimaryMode::Table ? finite(table[k] * multiplier) : uniform; }
+};
+struct Enhancement {
+  float sharpen = 0, dehalo = 0, a = 0, b = 0, c = 0;
+  span2d::Span<const float> sharpen_window{}, halo_window{};
+  bool active() const { return sharpen != 0 || dehalo != 0; }
+};
+float enhancement_gain(float q, std::size_t k, const Enhancement& e);
 struct SpectralParams {
   // -1: FFT3D; 0..4: DFTTest. All constants are already calibrated.
   int type = -1;
@@ -10,6 +23,7 @@ struct SpectralParams {
   PrimaryMode primary_mode = PrimaryMode::Uniform;
   // Immutable calibrated logical bins, disjoint from writable spectrum.
   span2d::Span<const float> primary{};
+  Enhancement enhancement{};
 };
 using SpectralKernel = void (*)(std::complex<float>*, const std::complex<float>*, std::size_t, float,
                                 const SpectralParams&);
@@ -22,16 +36,16 @@ struct Fft3dTwiddles {
 const Fft3dTwiddles& get_fft3d_twiddles() noexcept;
 
 using Fft3dTemporalKernel = void (*)(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
-                                     float degrid, const std::complex<float>* grid, float noise, float lower,
+                                     float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                                      std::complex<float>* out);
 void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
-                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                            std::complex<float>* out);
 Fft3dTemporalKernel select_fft3d_temporal(int opt);
 const char* fft3d_temporal_target(int opt);
 
 void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
-                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                            std::complex<float>* out);
 
 SpectralKernel select_spectral(int opt);

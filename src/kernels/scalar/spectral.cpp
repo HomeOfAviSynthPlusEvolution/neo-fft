@@ -5,6 +5,8 @@ namespace neo_fft {
 void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
                      const SpectralParams& p) {
   require(p.primary_mode != PrimaryMode::Table || p.primary.size() == count, "primary table shape mismatch");
+  require(!p.enhancement.sharpen || p.enhancement.sharpen_window.size() == count, "sharpen table shape mismatch");
+  require(!p.enhancement.dehalo || p.enhancement.halo_window.size() == count, "halo table shape mismatch");
   for (std::size_t k = 0; k < count; ++k) {
     const float a = p.primary_mode == PrimaryMode::Table ? p.primary[k] : p.a;
     const float mr = grid ? finite(scale * grid[k].real()) : 0;
@@ -13,6 +15,9 @@ void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, st
     const float power = finite(re * re + im * im);
     float gain = 0;
     switch (p.type) {
+      case -2:
+        gain = 1;
+        break;
       case -1: {
         const float q = power + 1e-15f;
         gain = std::max((q - a) / q, p.floor);
@@ -43,6 +48,8 @@ void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, st
       default:
         throw std::invalid_argument("invalid spectral filter type");
     }
+    if (p.enhancement.active())
+      gain = finite(gain * enhancement_gain(finite(power + 1e-15f), k, p.enhancement));
     finite(gain);
     x[k] = {finite(gain * re + mr), finite(gain * im + mi)};
   }
@@ -72,8 +79,9 @@ const Fft3dTwiddles& get_fft3d_twiddles() noexcept {
 }
 
 void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
-                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                            std::complex<float>* out) {
+  require(noise.mode != PrimaryMode::Table || noise.table.size() == bins, "noise table shape mismatch");
   require(T >= 1 && T <= 5, "FFT3D invalid T");
   require(c >= 0 && c < T, "FFT3D invalid c");
   if (T == 1) {
@@ -87,7 +95,7 @@ void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int
       const float im = finite(spectra[0][k].imag() - mi);
       const float power = finite(re * re + im * im);
       const float q = power + 1e-15f;
-      const float gain = std::max((q - noise) / q, lower);
+      const float gain = std::max((q - noise.at(k)) / q, lower);
       out[k] = {finite(gain * re + mr), finite(gain * im + mi)};
     }
     return;
@@ -126,7 +134,7 @@ void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int
     for (int m = 0; m < T; ++m) {
       const float power = finite(R[m].real() * R[m].real() + R[m].imag() * R[m].imag());
       const float q = power + 1e-15f;
-      const float gain = std::max((q - noise) / q, lower);
+      const float gain = std::max((q - noise.at(k)) / q, lower);
       R_filtered[m] = gain * R[m];
     }
 
@@ -145,7 +153,7 @@ void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int
 }
 
 void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
-                           float degrid, const std::complex<float>* grid, float noise, float lower,
+                           float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                            std::complex<float>* out) {
   select_fft3d_temporal(0)(spectra, T, c, bins, degrid, grid, noise, lower, out);
 }

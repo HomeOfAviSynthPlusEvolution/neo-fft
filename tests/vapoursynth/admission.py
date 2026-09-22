@@ -20,9 +20,9 @@ def main():
     c.neo_fft.DFTTest(src).get_frame(0)
 
     # Invalid temporal parameters rejection
-    fails(lambda:c.neo_fft.FFT3D(src,bt=-1),'outside 1..5')
-    fails(lambda:c.neo_fft.FFT3D(src,bt=0),'outside 1..5')
-    fails(lambda:c.neo_fft.FFT3D(src,bt=6),'outside 1..5')
+    c.neo_fft.FFT3D(src,bt=-1).get_frame(0)
+    fails(lambda:c.neo_fft.FFT3D(src,bt=0),'outside -1 or 1..5')
+    fails(lambda:c.neo_fft.FFT3D(src,bt=6),'outside -1 or 1..5')
     fails(lambda:c.neo_fft.DFTTest(src,tbsize=0),'odd')
     fails(lambda:c.neo_fft.DFTTest(src,tbsize=2),'odd')
     fails(lambda:c.neo_fft.DFTTest(src,tbsize=4),'odd')
@@ -41,7 +41,7 @@ def main():
             fails(lambda:call(src,**{temporal:1},**kwargs))
         fails(lambda:call(src,**{temporal:1},sigma='wrong'))
         fails(lambda:call(src,**{temporal:1},unknown=0))
-    for kwargs in [dict(sharpen=.1),dict(sigma2=1),dict(mt=True),dict(interlaced=True),dict(l=-1),dict(kratio=3),
+    for kwargs in [dict(sharpen=-.1),dict(sigma2=-1),dict(mt=True),dict(interlaced=True),dict(l=-1),dict(kratio=3),
                    dict(wintype=3),dict(beta=0),dict(ncpu=0),dict(ow=17),dict(bw=1)]:
         fails(lambda:c.neo_fft.FFT3D(src,bt=1,**kwargs))
     for kwargs in [dict(dither=1),dict(threads=2),dict(fft_threads=2),dict(nlocation=[0]),dict(ssx=[1.]),

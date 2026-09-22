@@ -104,7 +104,7 @@ if(NEO_FFT_ENABLE_SIMD AND ("avx2" IN_LIST NEO_FFT_FFT_TARGETS))
 endif()
 
 add_library(neo_fft_core STATIC src/spectral/fft.cpp src/algorithms/windows.cpp
-  src/algorithms/plan.cpp src/algorithms/profile.cpp src/kernels/scalar/spectral.cpp src/kernels/scalar/spatial.cpp
+  src/algorithms/plan.cpp src/algorithms/profile.cpp src/algorithms/fft3d_profile.cpp src/kernels/scalar/spectral.cpp src/kernels/scalar/spatial.cpp
   src/runtime/workspace.cpp src/runtime/workspace_pool.cpp)
 target_sources(neo_fft_core PRIVATE ${NEO_FFT_FFT_OBJECTS})
 target_compile_definitions(neo_fft_core PRIVATE NEO_FFT_ENABLE_HIGHWAY=$<BOOL:${NEO_FFT_ENABLE_HIGHWAY}>)
@@ -182,6 +182,10 @@ if(BUILD_TESTING)
   add_test(NAME core.foundation COMMAND neo_fft_foundation_tests)
   set_tests_properties(core.foundation PROPERTIES LABELS "spec")
 
+  add_executable(neo_fft_fft3d_model_tests tests/unit/fft3d_models.cpp)
+  target_link_libraries(neo_fft_fft3d_model_tests PRIVATE neo_fft_core)
+  add_test(NAME core.fft3d_models COMMAND neo_fft_fft3d_model_tests)
+
   add_executable(neo_fft_profile_tests tests/unit/profiles.cpp)
   target_link_libraries(neo_fft_profile_tests PRIVATE neo_fft_core)
   add_test(NAME core.profiles COMMAND neo_fft_profile_tests)
@@ -205,7 +209,7 @@ if(BUILD_TESTING)
   # Match the plugin's self-contained MinGW runtime. An unrelated libstdc++ on
   # the host PATH must not prevent tests from starting (e.g. GCC 16 once ABI).
   if(MINGW)
-    foreach(test foundation profile algorithm dispatch workspace)
+    foreach(test foundation profile fft3d_model algorithm dispatch workspace)
       target_link_options(neo_fft_${test}_tests PRIVATE -static -static-libgcc -static-libstdc++)
     endforeach()
   endif()

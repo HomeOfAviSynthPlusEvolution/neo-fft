@@ -43,7 +43,9 @@ void validate(const FFT3DConfig& c) {
   require(c.bw >= 2 && c.bh >= 2, "FFT3D bw/bh must be >=2");
   require(c.ow <= c.bw / 2 && c.oh <= c.bh / 2, "FFT3D ow/oh exceeds half block");
   require(c.wintype >= 0 && c.wintype <= 2, "FFT3D wintype outside 0..2");
-  require(c.bt >= 1 && c.bt <= 5, "FFT3D bt outside 1..5");
+  require(c.bt == -1 || (c.bt >= 1 && c.bt <= 5), "FFT3D bt outside -1 or 1..5");
+  validate(c.enhancement);
+  for (auto s : {c.sigma2, c.sigma3, c.sigma4}) nonnegative(s.value_or(c.sigma), "FFT3D sigma2..4");
   nonnegative(c.sigma, "FFT3D sigma");
   nonnegative(c.degrid, "FFT3D degrid");
   require(std::isfinite(c.beta) && c.beta >= 1, "FFT3D beta must be >=1");
@@ -71,7 +73,8 @@ void validate(const DFTConfig& c) {
   select_spatial(c.opt);
 }
 Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
-    : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), temporal_size(c.bt), fft(c.bh, c.bw),
+    : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), temporal_size(std::max(1, c.bt)), fft(c.bh, c.bw),
+      denoise_(c.bt != -1),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
       kernel_(select_spectral(c.opt)), temporal_kernel_(select_fft3d_temporal(c.opt)),
       spatial_(select_spatial(c.opt)), mean_scale_(c.degrid),
@@ -84,11 +87,25 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
   sigma_eff_ = finite(c.sigma * factor);
   norm_ = 1.0f / (float(c.bw) * float(c.bh));
   beta_ = c.beta;
-  params_.a = finite((sigma_eff_ * sigma_eff_) / norm_);
+  const std::array<float, 4> sigmas = {sigma_eff_, finite(c.sigma2.value_or(c.sigma) * factor),
+      finite(c.sigma3.value_or(c.sigma) * factor), finite(c.sigma4.value_or(c.sigma) * factor)};
+  const bool varying = sigmas[1] != sigmas[0] || sigmas[2] != sigmas[0] || sigmas[3] != sigmas[0];
   params_.floor = (c.beta - 1) / c.beta;
-  for (int T = 1; T <= std::max(1, c.bt); ++T) {
-    finite(((float(T) * sigma_eff_) * sigma_eff_) / norm_);
+  if (denoise_) {
+    if (varying) {
+      primary_ = fft3d_profile(c.bw, c.bh, sigmas);
+      params_.primary_mode = PrimaryMode::Table;
+      params_.primary = {primary_.data(), primary_.size()};
+      for (float v : primary_) finite(float(temporal_size) * v);
+    } else {
+      params_.a = finite((sigma_eff_ * sigma_eff_) / norm_);
+      for (int T = 1; T <= temporal_size; ++T) finite(((float(T) * sigma_eff_) * sigma_eff_) / norm_);
+    }
   }
+  enhancement_tables_ = enhancement_tables(c.bw, c.bh, factor, c.enhancement);
+  enhancement_params_.type = -2;
+  enhancement_params_.enhancement = enhancement_tables_.view(c.enhancement);
+  if (!varying && denoise_) params_.enhancement = enhancement_params_.enhancement;
   if (c.degrid != 0) {
     auto block = buffer<float>(fft.samples());
     const float peak = f.floating ? 1.0f : float((1 << f.bits) - 1);
@@ -148,6 +165,12 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
     require(grid_[0].real() != 0, "DFTTest zmean requires nonzero template DC");
   }
 }
+void Plan::enhance(std::complex<float>* spectrum) const {
+  if (!enhancement_params_.enhancement.active()) return;
+  const float scale = grid_.empty() ? 0 : finite(finite(mean_scale_ * spectrum[0].real()) / grid_[0].real());
+  kernel_(spectrum, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, enhancement_params_);
+}
+
 template <class T>
 void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws) const {
   require(!sources.empty(), "sources must not be empty");
@@ -195,7 +218,11 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
 
   if (algorithm == Algorithm::FFT3D) {
     const int c = T_slots / 2;
-    const float noise = ((float(T_slots) * sigma_eff_) * sigma_eff_) / norm_;
+    NoisePower noise;
+    if (denoise_) {
+      if (!primary_.empty()) { noise.mode = PrimaryMode::Table; noise.table = {primary_.data(), primary_.size()}; noise.multiplier = float(T_slots); }
+      else noise.uniform = ((float(T_slots) * sigma_eff_) * sigma_eff_) / norm_;
+    }
     const float lower = (beta_ - 1.0f) / beta_;
     const float* wx_a = wx_.analysis.data();
     const float* wx_s = wx_.synthesis.data();
@@ -222,7 +249,10 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           fft.forward(blk, ws.spectrum(0).data());
           auto* spec_b = ws.spectrum(0).data();
           const float scale = grid_.empty() ? 0 : (mean_scale_ * spec_b[0].real()) / grid_[0].real();
-          kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, params_);
+          if (denoise_) {
+            kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, params_);
+            if (!primary_.empty()) enhance(spec_b);
+          } else enhance(spec_b);
           fft.inverse(spec_b, ws.inverse(0).data());
 
           const float* inv_b = ws.inverse(0).data();
@@ -252,6 +282,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
                            noise, lower, out_spectrum);
 
           float* inv_buf = ws.inverse(0).data();
+          enhance(out_spectrum);
           fft.inverse(out_spectrum, inv_buf);
 
           for (int y = 0; y < gy.block; ++y) {

@@ -1,6 +1,8 @@
 #pragma once
 #include "algorithms/windows.hpp"
 #include "algorithms/profile.hpp"
+#include "algorithms/fft3d_profile.hpp"
+#include <optional>
 #include "kernels/spectral.hpp"
 #include "kernels/spatial.hpp"
 #include "runtime/workspace.hpp"
@@ -15,6 +17,8 @@ struct SampleFormat {
 struct FFT3DConfig {
   int bw = 32, bh = 32, ow = -1, oh = -1, wintype = 0, opt = 0, bt = 1;
   float sigma = 2, beta = 1, degrid = 1;
+  std::optional<float> sigma2, sigma3, sigma4;
+  EnhancementConfig enhancement;
 };
 struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
@@ -55,6 +59,10 @@ public:
   runtime::WorkspacePool& workspace_pool() const noexcept { return pool_; }
 
 private:
+  bool denoise_ = true;
+  EnhancementTables enhancement_tables_;
+  SpectralParams enhancement_params_;
+  void enhance(std::complex<float>* spectrum) const;
   AxisWindow wx_, wy_;
   std::vector<float> h_;
   std::vector<float> h_synthesis_;

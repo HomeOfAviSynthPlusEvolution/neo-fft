@@ -141,13 +141,13 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.beta = p.number("beta", 1);
   c.degrid = p.number("degrid", 1);
   c.bt = p.integer("bt", 3);
-  require(c.bt >= 1 && c.bt <= 5, "FFT3D bt outside 1..5");
+
   p.same("kratio", 2.0f);
-  p.same("sharpen", 0.0f);
-  p.same("scutoff", 0.3f);
-  p.same("svr", 1.0f);
-  p.same("smin", 4.0f);
-  p.same("smax", 20.0f);
+  c.enhancement.sharpen = p.number("sharpen", 0.0f);
+  c.enhancement.scutoff = p.number("scutoff", 0.3f);
+  c.enhancement.svr = p.number("svr", 1.0f);
+  c.enhancement.smin = p.number("smin", 4.0f);
+  c.enhancement.smax = p.number("smax", 20.0f);
   p.boolean("measure", true);
   p.off("interlaced");
   for (auto n : {"pframe", "px", "py", "l", "t", "r", "b"})
@@ -155,11 +155,12 @@ inline FFT3DConfig fft3d_config(Params p) {
   p.off("pshow");
   p.same("pcutoff", 0.1f);
   p.same("pfactor", 0.0f);
-  for (auto n : {"sigma2", "sigma3", "sigma4"})
-    p.same(n, c.sigma);
-  p.same("dehalo", 0.0f);
-  p.same("hr", 2.0f);
-  p.same("ht", 50.0f);
+  c.sigma2 = p.number("sigma2", c.sigma);
+  c.sigma3 = p.number("sigma3", c.sigma);
+  c.sigma4 = p.number("sigma4", c.sigma);
+  c.enhancement.dehalo = p.number("dehalo", 0.0f);
+  c.enhancement.hr = p.number("hr", 2.0f);
+  c.enhancement.ht = p.number("ht", 50.0f);
   require(p.integer("ncpu", 2) > 0, "ncpu must be positive");
   p.off("mt");
   p.backend();
