@@ -94,10 +94,12 @@ double dft_raw_window(int id, int j, int length, float beta) {
   require(std::isfinite(value), "DFTTest non-finite window");
   return value;
 }
-DftWindow dft_window_3d(int tbsize, int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta, int opt) {
+DftWindow dft_window_3d(int tbsize, int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta, int opt, int temporal_mode, int temporal_overlap) {
   dimension(tbsize);
   dimension(block);
-  require(tbsize > 0 && tbsize <= 15 && tbsize % 2 == 1, "DFTTest tbsize must be odd integer in 1..15");
+  require(tbsize > 0 && tbsize <= 15, "DFTTest tbsize outside 1..15");
+  require(temporal_mode==0 || temporal_mode==1,"DFTTest temporal window mode invalid");
+  require(temporal_mode==0 || (temporal_overlap>=0 && temporal_overlap<tbsize),"DFTTest temporal overlap invalid");
   require(mode == 0 || mode == 1, "DFTTest window mode invalid");
   require(overlap >= 0 && overlap < block, "DFTTest window overlap invalid");
   auto raw = buffer<double>(block), sw = buffer<double>(block);
@@ -119,6 +121,19 @@ DftWindow dft_window_3d(int tbsize, int block, int overlap, int mode, int spatia
   auto tw = buffer<double>(tbsize);
   for (int z = 0; z < tbsize; ++z)
     tw[z] = dft_raw_window(temporal, z, tbsize, tbeta);
+  if(temporal_mode==1) {
+    const auto raw_time=tw;
+    const int step=tbsize-temporal_overlap;
+    for(int z=0;z<tbsize;++z) {
+      double energy=0;
+      for(int h=z;h>=0;h-=step)energy+=raw_time[h]*raw_time[h];
+      for(int h=z+step;h<tbsize;h+=step)energy+=raw_time[h]*raw_time[h];
+      require(std::isfinite(energy) && energy>0,"DFTTest temporal phase energy invalid");
+      tw[z]=raw_time[z]/std::sqrt(energy);
+      require(std::isfinite(tw[z]),"DFTTest temporal window invalid");
+    }
+  }
+
 
   const double volume = double(tbsize) * double(block) * double(block);
   const double inv_sqrt_v = 1.0 / std::sqrt(volume);
