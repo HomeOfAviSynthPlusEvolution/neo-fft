@@ -1,5 +1,6 @@
 #include "algorithms/windows.hpp"
 #include <array>
+#include "kernels/table.hpp"
 
 namespace neo_fft {
 AxisWindow fft3d_window(int block, int overlap, int type) {
@@ -93,7 +94,7 @@ double dft_raw_window(int id, int j, int length, float beta) {
   require(std::isfinite(value), "DFTTest non-finite window");
   return value;
 }
-DftWindow dft_window_3d(int tbsize, int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta) {
+DftWindow dft_window_3d(int tbsize, int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta, int opt) {
   dimension(tbsize);
   dimension(block);
   require(tbsize > 0 && tbsize <= 15 && tbsize % 2 == 1, "DFTTest tbsize must be odd integer in 1..15");
@@ -124,23 +125,18 @@ DftWindow dft_window_3d(int tbsize, int block, int overlap, int mode, int spatia
   const std::size_t total_samples = mul_size(std::size_t(tbsize), mul_size(std::size_t(block), std::size_t(block)));
   DftWindow w{buffer<float>(total_samples), 0};
   float energy = 0.0f;
-  std::size_t idx = 0;
+  const auto kernels=select_table(opt);
   for (int z = 0; z < tbsize; ++z)
     for (int y = 0; y < block; ++y)
-      for (int x = 0; x < block; ++x) {
-        const double v = tw[z] * sw[y] * sw[x] * inv_sqrt_v;
-        require(std::isfinite(v) && std::abs(v) <= std::numeric_limits<float>::max(), "DFTTest window overflow");
-        const float h = float(v);
-        w.h[idx++] = h;
-        energy += h * h;
-      }
+      energy=kernels.window(w.h.data()+(std::size_t(z)*block+y)*block,sw.data(),sw.size(),
+                            tw[z]*sw[y],inv_sqrt_v,energy);
   require(std::isfinite(energy) && energy > 0, "DFTTest zero or invalid window energy");
   w.wscale = 1.0f / energy;
   require(std::isfinite(w.wscale) && w.wscale > 0, "DFTTest invalid wscale");
   return w;
 }
 
-DftWindow dft_window(int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta) {
-  return dft_window_3d(1, block, overlap, mode, spatial, temporal, sbeta, tbeta);
+DftWindow dft_window(int block, int overlap, int mode, int spatial, int temporal, float sbeta, float tbeta, int opt) {
+  return dft_window_3d(1, block, overlap, mode, spatial, temporal, sbeta, tbeta, opt);
 }
 } // namespace neo_fft

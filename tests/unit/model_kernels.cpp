@@ -1,4 +1,6 @@
 #include "kernels/model.hpp"
+#include "kernels/table.hpp"
+#include "algorithms/windows.hpp"
 #include "base/checked.hpp"
 #include "../test.hpp"
 #include <cstring>
@@ -43,6 +45,63 @@ template<class T> void check_decode(std::size_t n,const ModelKernels& native) {
 }
 int main() {try {
   const auto native=select_model(0);const auto scalar=model_scalar();
+  const auto tables=select_table(0),reference=table_scalar();
+  // Independent input frequencies exercise all segments and exact knots, with
+  // a guarded logical tail for row inputs and outputs.
+  for(std::size_t n=1;n<=257;++n) {
+    Guard<float> x(n),a(n),b(n),c(n),e(n);
+    for(std::size_t i=0;i<n;++i)x.data[i]=float(i%33)/32;
+    tables.radius(a.data,x.data,n,.3f,3);reference.radius(b.data,x.data,n,.3f,3);
+    CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+    const float sigmas[]={2,3,4,5};
+    tables.analytic(a.data,x.data,n,sigmas,.001f);reference.analytic(b.data,x.data,n,sigmas,.001f);
+    CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+    const float knots[]={0,.125f,.5f,.875f,1},values[]={3,17,0,21,4};
+    tables.curve(a.data,x.data,n,knots,values,5,.37f);reference.curve(b.data,x.data,n,knots,values,5,.37f);
+    CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+    tables.product(a.data,x.data,n,.39f,.71f);reference.product(b.data,x.data,n,.39f,.71f);
+    CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+    tables.weights(a.data,x.data,n,.3f,.01f);reference.weights(b.data,x.data,n,.3f,.01f);
+    CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+    for(bool sharp:{false,true})for(bool halo:{false,true}) {
+      tables.enhancement(sharp ? a.data : nullptr,halo ? c.data : nullptr,x.data,n,.1f,.18f,2);
+      reference.enhancement(sharp ? b.data : nullptr,halo ? e.data : nullptr,x.data,n,.1f,.18f,2);
+      if(sharp)CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+      if(halo)CHECK(std::memcmp(c.data,e.data,n*sizeof(float))==0);
+    }
+    tables.divide(a.data,n,.13f);reference.divide(b.data,n,.13f);
+    CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+    Guard<double> axis(n);for(std::size_t i=0;i<n;++i)axis.data[i]=double(i%31)/31;
+    CHECK(tables.window(a.data,axis.data,n,.39,.71,.125f)==reference.window(b.data,axis.data,n,.39,.71,.125f));
+    CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
+    CHECK(tables.maximum(a.data,n)==reference.maximum(b.data,n));
+    tables.check_scale(a.data,n,15);reference.check_scale(b.data,n,15);
+  }
+  for(int id=0;id<12;++id)for(int block:{16,31,32})for(int mode:{0,1}) {
+    const auto a=dft_window_3d(3,block,block/2,mode,id,id,2.5f,2.5f,0);
+    const auto b=dft_window_3d(3,block,block/2,mode,id,id,2.5f,2.5f,1);
+    CHECK(a.h==b.h && a.wscale==b.wscale);
+  }
+  for(auto k:{tables,reference}) {
+    float f[32]{},out[32];
+    // Overflow in an unused interpolation branch must not reject a valid bin.
+    const float large[]={1,1,3e38f,3e38f};
+    std::fill_n(f,32,1.f);k.analytic(out,f,32,large,1);
+    const float huge[]={1e30f,1e30f,1e30f,1e30f};
+    rejects([&]{k.analytic(out,f,32,huge,1);});
+    const float knots[]={0,.5f,1},values[]={0,1e30f,1};
+    std::fill_n(f,32,.5f);k.curve(out,f,32,knots,values,3,1);
+    f[31]=NAN;rejects([&]{k.curve(out,f,32,knots,values,3,1);});
+    std::fill_n(f,32,1.f);rejects([&]{k.enhancement(nullptr,out,f,32,1,.18f,1e30f);});
+    double axis[32];std::fill_n(axis,32,1.0);
+    rejects([&]{k.window(out,axis,32,1e40,1,0);});
+    CHECK(k.window(nullptr,nullptr,0,1,1,.25f)==.25f);
+    CHECK(k.maximum(nullptr,0)==0);k.check_scale(nullptr,0,1);
+    for(std::size_t i=0;i<32;++i) {
+      std::fill_n(f,32,1.f);f[i]=1e30f;
+      rejects([&]{k.check_scale(f,32,1e20f);});
+    }
+  }
   for(auto k:{native,scalar}) {
     k.decode(nullptr,SampleStorage::F32,nullptr,0,0,1);
     k.window(nullptr,nullptr,0,1);k.power(nullptr,nullptr,0,nullptr,0,false);

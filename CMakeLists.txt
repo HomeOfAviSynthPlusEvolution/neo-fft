@@ -104,7 +104,7 @@ if(NEO_FFT_ENABLE_SIMD AND ("avx2" IN_LIST NEO_FFT_FFT_TARGETS))
 endif()
 
 add_library(neo_fft_core STATIC src/spectral/fft.cpp src/algorithms/windows.cpp
-  src/algorithms/plan.cpp src/algorithms/profile.cpp src/algorithms/fft3d_profile.cpp src/algorithms/dft_noise.cpp src/kernels/scalar/spectral.cpp src/kernels/scalar/spatial.cpp src/kernels/scalar/model.cpp
+  src/algorithms/plan.cpp src/algorithms/profile.cpp src/algorithms/fft3d_profile.cpp src/algorithms/dft_noise.cpp src/kernels/scalar/spectral.cpp src/kernels/scalar/spatial.cpp src/kernels/scalar/model.cpp src/kernels/scalar/table.cpp
   src/runtime/workspace.cpp src/runtime/workspace_pool.cpp)
 target_sources(neo_fft_core PRIVATE ${NEO_FFT_FFT_OBJECTS})
 target_compile_definitions(neo_fft_core PRIVATE NEO_FFT_ENABLE_HIGHWAY=$<BOOL:${NEO_FFT_ENABLE_HIGHWAY}>)
@@ -140,7 +140,7 @@ if(NEO_FFT_ENABLE_HIGHWAY)
     URL_HASH SHA256=e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_MakeAvailable(highway)
-  target_sources(neo_fft_core PRIVATE src/kernels/highway/spectral.cpp src/kernels/highway/spatial.cpp src/kernels/highway/model.cpp)
+  target_sources(neo_fft_core PRIVATE src/kernels/highway/spectral.cpp src/kernels/highway/spatial.cpp src/kernels/highway/model.cpp src/kernels/highway/table.cpp)
   target_link_libraries(neo_fft_core PUBLIC hwy)
   target_compile_definitions(neo_fft_core PRIVATE HWY_COMPILE_ALL_ATTAINABLE)
   set_target_properties(hwy PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -11,9 +11,10 @@ void curves() {
   check_near(p[2 * 5 + 2], 4, 1e-6);
   for (int system : {0, 1})
     for (int T : {1, 3, 5, 15})
-      for (int S : {1, 5, 8}) {
+      for (int S : {1, 5, 8, 16, 31, 32}) {
         c.system = system;
         p = dft_profile(c, T, S, 99, .25f);
+        CHECK(p == dft_profile(c,T,S,99,.25f,1));
         const int d = (T > 1) + 2 * (S > 1);
         for (int t = 0; t < T; ++t)
           for (int y = 0; y < S; ++y)

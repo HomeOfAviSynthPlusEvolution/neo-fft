@@ -1,5 +1,6 @@
 #include "algorithms/fft3d_profile.hpp"
 #include <algorithm>
+#include "kernels/table.hpp"
 
 namespace neo_fft {
 void validate(const EnhancementConfig& c) {
@@ -9,28 +10,26 @@ void validate(const EnhancementConfig& c) {
   for (float v : {c.scutoff, c.hr})
     require(std::isfinite(v) && v > 0, "FFT3D cutoff/radius must be positive");
 }
-std::vector<float> fft3d_profile(int W, int H, const std::array<float, 4>& s) {
+std::vector<float> fft3d_profile(int W, int H, const std::array<float, 4>& s, int opt) {
   require(W >= 2 && H >= 2, "FFT3D profile shape invalid");
   for (float v : s) require(std::isfinite(v) && v >= 0, "FFT3D invalid scaled sigma");
   const int K = W / 2 + 1;
   const float norm = 1 / (float(W) * float(H));
-  const float a = std::sqrt(.5f) / 4, b = std::sqrt(.5f) / 2;
+  const auto kernels=select_table(opt);
   auto p = buffer<float>(mul_size(std::size_t(H), std::size_t(K)));
-  for (int y = 0; y < H; ++y)
-    for (int x = 0; x < K; ++x) {
-      const float fy = float(H - 2 * std::abs(y - H / 2)) / float(H), fx = float(x) / float(K);
-      const float f = std::sqrt((fx * fx + fy * fy) * .5f);
-      const float v = f < a ? finite(s[3] + finite(finite((s[2] - s[3]) * f) / a))
-                    : f < b ? finite(s[2] + finite(finite((s[1] - s[2]) * (f - a)) / (b - a)))
-                            : finite(s[0] + finite(finite((s[1] - s[0]) * (1 - f)) / (1 - b)));
-      p[std::size_t(y) * K + x] = finite(finite(v * v) / norm);
-    }
+  auto fx=buffer<float>(K),radius=buffer<float>(K);
+  for(int x=0;x<K;++x) fx[x]=float(x)/float(K);
+  for(int y=0;y<H;++y) {
+    const float fy=float(H-2*std::abs(y-H/2))/float(H);
+    kernels.radius(radius.data(),fx.data(),fx.size(),fy*fy,2);
+    kernels.analytic(p.data()+std::size_t(y)*K,radius.data(),radius.size(),s.data(),norm);
+  }
   return p;
 }
 Enhancement EnhancementTables::view(const EnhancementConfig& config) const {
   return {config.sharpen, config.dehalo, a, b, c, {sharpen.data(), sharpen.size()}, {halo.data(), halo.size()}};
 }
-EnhancementTables enhancement_tables(int W, int H, float factor, const EnhancementConfig& c) {
+EnhancementTables enhancement_tables(int W, int H, float factor, const EnhancementConfig& c, int opt) {
   validate(c);
   require(W >= 2 && H >= 2 && std::isfinite(factor) && factor > 0, "FFT3D invalid enhancement geometry");
   EnhancementTables result;
@@ -48,24 +47,22 @@ EnhancementTables enhancement_tables(int W, int H, float factor, const Enhanceme
   const auto count = mul_size(std::size_t(H), std::size_t(W / 2 + 1));
   if (c.sharpen != 0) result.sharpen = buffer<float>(count);
   if (c.dehalo != 0) result.halo = buffer<float>(count);
-  float maximum = 0;
-  for (int y = 0; y < H; ++y)
-    for (int x = 0; x <= W / 2; ++x) {
-      const float dy = float(y < H / 2 ? y : H - y);
-      const float d2 = finite(finite(finite(finite(dy * dy) * c.svr) * c.svr) / (float(H / 2) * float(H / 2)) +
-                             float(x) * float(x) / (float(W / 2) * float(W / 2)));
-      const auto k = std::size_t(y) * (W / 2 + 1) + x;
-      if (c.sharpen != 0) result.sharpen[k] = finite(1 - std::exp(finite(-d2 / cutoff)));
-      if (c.dehalo != 0) {
-        const float first = finite(finite(finite(-.7f * d2) * c.hr) * c.hr);
-        const float second = finite(finite(-d2 * c.hr) * c.hr);
-        result.halo[k] = finite(std::exp(first) - std::exp(second));
-        maximum = std::max(maximum, result.halo[k]);
-      }
-    }
+  const auto kernels=select_table(opt);
+  const int K=W/2+1;
+  auto x2=buffer<float>(K);
+  for(int x=0;x<K;++x) x2[x]=float(x)*float(x)/(float(W/2)*float(W/2));
+  for(int y=0;y<H;++y) {
+    const float dy=float(y<H/2 ? y : H-y);
+    const float y2=finite(finite(finite(dy*dy)*c.svr)*c.svr)/(float(H/2)*float(H/2));
+    const auto offset=std::size_t(y)*K;
+    kernels.enhancement(c.sharpen!=0 ? result.sharpen.data()+offset : nullptr,
+                        c.dehalo!=0 ? result.halo.data()+offset : nullptr,
+                        x2.data(),x2.size(),y2,cutoff,c.hr);
+  }
+  const float maximum=kernels.maximum(result.halo.data(),result.halo.size());
   if (c.dehalo != 0) {
     require(std::isfinite(maximum) && maximum > 0, "FFT3D degenerate dehalo window");
-    for (float& v : result.halo) v = finite(v / maximum);
+    kernels.divide(result.halo.data(),result.halo.size(),maximum);
   }
   return result;
 }

@@ -17,18 +17,24 @@ int main() {
       native.prepare_pattern(view);scalar.prepare_pattern(view);
       CHECK(*native.pattern_power()==*scalar.pattern_power());
     }
-    for (int W : {5, 8, 10}) for (int H : {5, 8, 9}) {
+    for (int W : {5, 8, 10, 16, 31, 32}) for (int H : {5, 8, 9}) {
       const std::array<float, 4> sigma{2, 4, 6, 8};
       const auto p = fft3d_profile(W, H, sigma);
+      CHECK(p==fft3d_profile(W,H,sigma,1));
       for (int y = 0; y < H; ++y) for (int x = 0; x <= W / 2; ++x) {
         const double fy = double(H - 2 * std::abs(y - H / 2)) / H, fx = double(x) / (W / 2 + 1);
         const double f = std::sqrt((fx * fx + fy * fy) / 2), a = std::sqrt(.5) / 4, b = 2 * a;
         const double s = f < a ? 8 - 2 * f / a : f < b ? 6 - 2 * (f-a) / (b-a) : 2 + 2 * (1-f) / (1-b);
-        check_near(p[y * (W / 2 + 1) + x], s * s * W * H, .001);
+        // Binary32 error scales with block area; retain the original absolute floor.
+        const double expected_power=s*s*W*H;
+        check_near(p[y * (W / 2 + 1) + x], expected_power,
+                   std::max(.001, expected_power*4*std::numeric_limits<float>::epsilon()));
       }
       EnhancementConfig c;
       c.sharpen = .4f; c.dehalo = .2f;
       const auto e = enhancement_tables(W, H, 4, c);
+      const auto scalar_tables=enhancement_tables(W,H,4,c,1);
+      CHECK(e.sharpen==scalar_tables.sharpen && e.halo==scalar_tables.halo);
       auto params = SpectralParams{}; params.type = -2; params.enhancement = e.view(c);
       auto in = buffer<std::complex<float>>(p.size()), expected = in, actual = in;
       double max_halo = 0;
@@ -54,7 +60,8 @@ int main() {
         actual = in;
         select_spectral(opt)(actual.data(), nullptr, actual.size(), 0, params);
         for (std::size_t k = 0; k < actual.size(); ++k) {
-          check_near(actual[k].real(), expected[k].real(), 5e-5);
+          check_near(actual[k].real(), expected[k].real(),
+                     std::max(5e-5, std::abs(double(expected[k].real()))*4*std::numeric_limits<float>::epsilon()));
           check_near(actual[k].imag(), expected[k].imag(), 5e-5);
         }
       }

@@ -1,3 +1,4 @@
+#include "kernels/table.hpp"
 #include "algorithms/plan.hpp"
 #include "algorithms/pad.hpp"
 #include "kernels/spectral.hpp"
@@ -105,16 +106,16 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
   params_.floor = (c.beta - 1) / c.beta;
   if (denoise_ && !sampled_) {
     if (varying) {
-      primary_ = fft3d_profile(c.bw, c.bh, sigmas);
+      primary_ = fft3d_profile(c.bw, c.bh, sigmas, c.opt);
       params_.primary_mode = PrimaryMode::Table;
       params_.primary = {primary_.data(), primary_.size()};
-      for (float v : primary_) finite(float(temporal_size) * v);
+      select_table(c.opt).check_scale(primary_.data(),primary_.size(),float(temporal_size));
     } else {
       params_.a = finite((sigma_eff_ * sigma_eff_) / norm_);
       for (int T = 1; T <= temporal_size; ++T) finite(((float(T) * sigma_eff_) * sigma_eff_) / norm_);
     }
   }
-  if (!preview_) enhancement_tables_ = enhancement_tables(c.bw, c.bh, factor, c.enhancement);
+  if (!preview_) enhancement_tables_ = enhancement_tables(c.bw, c.bh, factor, c.enhancement, c.opt);
   enhancement_params_.type = -2;
   if (!preview_) enhancement_params_.enhancement = enhancement_tables_.view(c.enhancement);
   if (!varying && !sampled_ && denoise_) params_.enhancement = enhancement_params_.enhancement;
@@ -127,10 +128,12 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     sample_weights_ = buffer<float>(fft.bins());
     const float cutoff2 = finite(c.pcutoff * c.pcutoff);
     require(cutoff2 > 0, "FFT3D pattern cutoff underflow");
-    for (int y = 0; y < c.bh; ++y) for (int x = 0; x <= c.bw / 2; ++x) {
-      const float fy = 2 * float(std::min(y, c.bh-y)) / float(c.bh), fx = 2 * float(x) / float(c.bw);
-      const float q = fy*fy + fx*fx;
-      sample_weights_[std::size_t(y)*(c.bw/2+1)+x] = finite(q / finite(q+cutoff2));
+    const auto tables=select_table(c.opt);
+    auto fx=buffer<float>(std::size_t(c.bw/2+1));
+    for(int x=0;x<=c.bw/2;++x)fx[x]=2*float(x)/float(c.bw);
+    for(int y=0;y<c.bh;++y) {
+      const float fy=2*float(std::min(y,c.bh-y))/float(c.bh);
+      tables.weights(sample_weights_.data()+std::size_t(y)*fx.size(),fx.data(),fx.size(),fy*fy,cutoff2);
     }
   }
   if (c.degrid != 0) {
@@ -159,7 +162,7 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
   if (c.tbsize > 1) {
     fft3d_ = std::make_unique<RealFFT3D>(c.tbsize, c.block, c.block);
   }
-  auto win = dft_window_3d(c.tbsize, c.block, c.mode == 0 ? 0 : c.overlap, c.mode, c.swin, c.twin, c.sbeta, c.tbeta);
+  auto win = dft_window_3d(c.tbsize, c.block, c.mode == 0 ? 0 : c.overlap, c.mode, c.swin, c.twin, c.sbeta, c.tbeta, c.opt);
   h_ = std::move(win.h);
   h_synthesis_.resize(h_.size());
   const float volume = float(c.tbsize) * float(c.block) * float(c.block);
@@ -180,7 +183,7 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
              c.f0beta,
              0};
   if (!sampled && !c.curves.empty()) {
-    primary_ = dft_profile(c.curves, c.tbsize, c.block, c.sigma, scale);
+    primary_ = dft_profile(c.curves, c.tbsize, c.block, c.sigma, scale, c.opt);
     params_.primary_mode = PrimaryMode::Table;
     params_.primary = {primary_.data(), primary_.size()};
   }

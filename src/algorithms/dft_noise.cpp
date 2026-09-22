@@ -11,15 +11,15 @@ DFTNoise::DFTNoise(const DFTConfig& c)
                                mul_size(fft_.bins(),2*sizeof(std::complex<float>)+2*sizeof(float)));
   require(working_set_bytes_ <= std::size_t(PTRDIFF_MAX), "DFTTest model extent exceeds ptrdiff_t");
   require(c.ftype < 2 && !locations.empty(), "inactive DFTTest sample model");
-  auto sample = dft_window_3d(c.tbsize,c.block,0,0,c.swin,c.twin,c.sbeta,c.tbeta);
-  const auto output = dft_window_3d(c.tbsize,c.block,c.mode == 0 ? 0 : c.overlap,c.mode,c.swin,c.twin,c.sbeta,c.tbeta);
+  auto sample = dft_window_3d(c.tbsize,c.block,0,0,c.swin,c.twin,c.sbeta,c.tbeta,c.opt);
+  const auto output = dft_window_3d(c.tbsize,c.block,c.mode == 0 ? 0 : c.overlap,c.mode,c.swin,c.twin,c.sbeta,c.tbeta,c.opt);
   calibration_ = finite(finite((1.0f / float(locations.size())) * finite(sample.wscale/output.wscale)) * c.alpha.value_or(c.ftype == 0 ? 5.0f : 7.0f));
   window_ = std::move(sample.h);
   auto input = window_;
   kernels_.scale(input.data(),nullptr,input.size(),255,1);
   grid_ = buffer<std::complex<float>>(fft_.bins());
   fft_.forward(input.data(),grid_.data());
-  for (auto v : grid_) { finite(v.real()); finite(v.imag()); }
+  select_spatial(c.opt).validate_finite(reinterpret_cast<const float*>(grid_.data()),2*grid_.size());
   require(!zmean_ || grid_[0].real()!=0, "DFTTest sample template DC must be nonzero");
 }
 void DFTNoise::prepare(const Gather& gather) const {

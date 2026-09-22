@@ -11,5 +11,5 @@ struct DFTCurves {
 };
 void validate(const DFTCurves& curves);
 // Returns calibrated primary values in [T,S,S/2+1] order.
-std::vector<float> dft_profile(const DFTCurves& curves, int time, int size, float sigma, float divisor);
+std::vector<float> dft_profile(const DFTCurves& curves, int time, int size, float sigma, float divisor, int opt = 0);
 } // namespace neo_fft
