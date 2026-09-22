@@ -9,6 +9,11 @@
 #include <vector>
 
 namespace neo_fft {
+// Literal diagnostics must not allocate on the successful hot path.
+inline void require(bool ok, const char* message) {
+  if (!ok)
+    throw std::invalid_argument(message);
+}
 inline void require(bool ok, const std::string& message) {
   if (!ok)
     throw std::invalid_argument(message);
