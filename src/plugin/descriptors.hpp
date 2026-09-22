@@ -121,12 +121,12 @@ struct Params {
       require(x >= INT32_MIN && x <= INT32_MAX, std::string(n) + ": array element outside int32");
     return v;
   }
-  void empty_numbers(const char* n) const {
+  std::vector<float> numbers(const char* n) const {
     auto v = unwrap(values.get_double_array(n, {}));
     for (auto x : v)
       require(std::isfinite(x) && std::abs(x) <= std::numeric_limits<float>::max(),
               std::string(n) + ": invalid array float");
-    require(v.empty(), std::string("unsupported phase-1 ") + n);
+    return std::vector<float>(v.begin(), v.end());
   }
 };
 inline FFT3DConfig fft3d_config(Params p) {
@@ -189,9 +189,11 @@ inline DFTConfig dft_config(Params p) {
   p.integer("tosize", 0);
   require(p.integers("nlocation").empty(), "unsupported phase-1 nlocation");
   p.same("alpha", c.ftype == 0 ? 5.0f : 7.0f);
-  for (auto n : {"slocation", "ssx", "ssy", "sst"})
-    p.empty_numbers(n);
-  p.same("ssystem", 0);
+  c.curves.shared = p.numbers("slocation");
+  c.curves.x = p.numbers("ssx");
+  c.curves.y = p.numbers("ssy");
+  c.curves.time = p.numbers("sst");
+  c.curves.system = p.integer("ssystem", 0);
   p.same("dither", 0);
   require(p.integer("dither_seed", 0) >= 0, "dither_seed must be nonnegative");
   require(p.integer("threads", 0) <= 1, "unsupported phase-1 threads > 1");

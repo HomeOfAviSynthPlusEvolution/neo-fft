@@ -50,6 +50,7 @@ void validate(const FFT3DConfig& c) {
   select_spectral(c.opt);
 }
 void validate(const DFTConfig& c) {
+  validate(c.curves);
   require(c.block > 0 && (c.mode == 0 || c.mode == 1), "DFTTest invalid sbsize/smode");
   require(c.mode != 0 || c.block % 2 == 1, "DFTTest center mode requires odd sbsize");
   require(c.mode == 0 || (c.overlap >= 0 && c.overlap < c.block), "DFTTest invalid sosize");
@@ -122,12 +123,17 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
     h_synthesis_[i] = h_[i] * volume;
   const float scale = c.ftype < 2 ? win.wscale : 1.0f;
   params_ = {c.ftype,
-             finite(c.sigma / scale),
+             c.curves.empty() ? finite(c.sigma / scale) : 0,
              finite(c.sigma2 / scale),
              finite(c.pmin / win.wscale),
              finite(c.pmax / win.wscale),
              c.f0beta,
              0};
+  if (!c.curves.empty()) {
+    primary_ = dft_profile(c.curves, c.tbsize, c.block, c.sigma, scale);
+    params_.primary_mode = PrimaryMode::Table;
+    params_.primary = {primary_.data(), primary_.size()};
+  }
   if (c.zmean) {
     auto block = h_;
     for (float& v : block)

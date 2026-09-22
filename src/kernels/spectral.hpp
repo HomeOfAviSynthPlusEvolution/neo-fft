@@ -2,10 +2,14 @@
 #include "spectral/fft.hpp"
 
 namespace neo_fft {
+enum class PrimaryMode { Uniform, Table };
 struct SpectralParams {
   // -1: FFT3D; 0..4: DFTTest. All constants are already calibrated.
   int type = -1;
   float a = 0, b = 0, low = 0, high = 0, exponent = 1, floor = 0;
+  PrimaryMode primary_mode = PrimaryMode::Uniform;
+  // Immutable calibrated logical bins, disjoint from writable spectrum.
+  span2d::Span<const float> primary{};
 };
 using SpectralKernel = void (*)(std::complex<float>*, const std::complex<float>*, std::size_t, float,
                                 const SpectralParams&);

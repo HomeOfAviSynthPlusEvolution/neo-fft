@@ -10,13 +10,15 @@ namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
               const SpectralParams& p) {
+  require(p.primary_mode != PrimaryMode::Table || p.primary.size() == count, "primary table shape mismatch");
   const hn::ScalableTag<float> d;
   if (!count)
     return;
   const auto lanes = hn::Lanes(d);
   const auto zero = hn::Zero(d), one = hn::Set(d, 1.0f), eps = hn::Set(d, 1e-15f);
-  const auto a = hn::Set(d, p.a), b = hn::Set(d, p.b), low = hn::Set(d, p.low), high = hn::Set(d, p.high);
-  auto compute_gain = [&](auto power) {
+  const auto uniform_a = hn::Set(d, p.a), b = hn::Set(d, p.b), low = hn::Set(d, p.low), high = hn::Set(d, p.high);
+  auto compute_gain = [&](auto power, std::size_t offset) {
+    const auto a = p.primary_mode == PrimaryMode::Table ? hn::LoadU(d, p.primary.data() + offset) : uniform_a;
     switch (p.type) {
       case -1: {
         const auto q = hn::Add(power, eps);
@@ -65,7 +67,7 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
       hn::LoadInterleaved2(d, output + 2 * k, re, im);
       const auto power = hn::Add(hn::Mul(re, re), hn::Mul(im, im));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
-      const auto gain = compute_gain(power);
+      const auto gain = compute_gain(power, k);
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Mul(gain, re);
       im = hn::Mul(gain, im);
@@ -84,7 +86,7 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
       im = hn::Sub(im, mi);
       const auto power = hn::Add(hn::Mul(re, re), hn::Mul(im, im));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
-      const auto gain = compute_gain(power);
+      const auto gain = compute_gain(power, k);
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Add(hn::Mul(gain, re), mr);
       im = hn::Add(hn::Mul(gain, im), mi);
@@ -94,7 +96,10 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
   }
   if (!hn::AllFalse(d, non_finite))
     throw std::runtime_error("non-finite sample or intermediate");
-  spectral_scalar(x + k, grid ? grid + k : nullptr, count - k, scale, p);
+  auto tail = p;
+  if (p.primary_mode == PrimaryMode::Table)
+    tail.primary = {p.primary.data() + k, count - k};
+  spectral_scalar(x + k, grid ? grid + k : nullptr, count - k, scale, tail);
 }
 
 void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,

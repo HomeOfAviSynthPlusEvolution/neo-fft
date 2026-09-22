@@ -4,7 +4,9 @@
 namespace neo_fft {
 void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
                      const SpectralParams& p) {
+  require(p.primary_mode != PrimaryMode::Table || p.primary.size() == count, "primary table shape mismatch");
   for (std::size_t k = 0; k < count; ++k) {
+    const float a = p.primary_mode == PrimaryMode::Table ? p.primary[k] : p.a;
     const float mr = grid ? finite(scale * grid[k].real()) : 0;
     const float mi = grid ? finite(scale * grid[k].imag()) : 0;
     const float re = finite(x[k].real() - mr), im = finite(x[k].imag() - mi);
@@ -13,29 +15,29 @@ void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, st
     switch (p.type) {
       case -1: {
         const float q = power + 1e-15f;
-        gain = std::max((q - p.a) / q, p.floor);
+        gain = std::max((q - a) / q, p.floor);
         break;
       }
       case 0: {
-        const float a = std::max((power - p.a) / (power + 1e-15f), 0.0f);
-        gain = std::abs(p.exponent - 1.0f) < 0.00005f   ? a
-               : std::abs(p.exponent - 0.5f) < 0.00005f ? std::sqrt(a)
-                                                        : std::pow(a, p.exponent);
+        const float wiener = std::max((power - a) / (power + 1e-15f), 0.0f);
+        gain = std::abs(p.exponent - 1.0f) < 0.00005f   ? wiener
+               : std::abs(p.exponent - 0.5f) < 0.00005f ? std::sqrt(wiener)
+                                                        : std::pow(wiener, p.exponent);
         break;
       }
       case 1:
-        gain = power < p.a ? 0.0f : 1.0f;
+        gain = power < a ? 0.0f : 1.0f;
         break;
       case 2:
-        gain = p.a;
+        gain = a;
         break;
       case 3:
-        gain = power >= p.low && power <= p.high ? p.a : p.b;
+        gain = power >= p.low && power <= p.high ? a : p.b;
         break;
       case 4: {
         const float q = power + 1e-15f;
         const float num = finite(q * p.high), den = finite(finite(q + p.low) * finite(q + p.high));
-        gain = p.a * std::sqrt(finite(num / den));
+        gain = a * std::sqrt(finite(num / den));
         break;
       }
       default:

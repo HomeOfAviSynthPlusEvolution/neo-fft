@@ -1,5 +1,6 @@
 #pragma once
 #include "algorithms/windows.hpp"
+#include "algorithms/profile.hpp"
 #include "kernels/spectral.hpp"
 #include "kernels/spatial.hpp"
 #include "runtime/workspace.hpp"
@@ -19,6 +20,7 @@ struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
   float sbeta = 2.5f, tbeta = 2.5f, sigma = 8, sigma2 = 8, pmin = 0, pmax = 500, f0beta = 1;
   bool zmean = true;
+  DFTCurves curves;
 };
 void validate(const FFT3DConfig& c);
 void validate(const DFTConfig& c);
@@ -58,6 +60,7 @@ private:
   std::vector<float> h_synthesis_;
   std::vector<std::complex<float>> grid_;
   std::unique_ptr<RealFFT3D> fft3d_;
+  std::vector<float> primary_;
   SpectralParams params_;
   SpectralKernel kernel_;
   Fft3dTemporalKernel temporal_kernel_ = nullptr;

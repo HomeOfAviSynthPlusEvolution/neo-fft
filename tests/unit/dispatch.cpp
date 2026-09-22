@@ -49,14 +49,21 @@ int main() {
     for (int type = -1; type <= 4; ++type)
       for (float exponent : {.5f, 1.0f, 2.0f, .50005f})
         for (std::size_t count : {1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257})
-          for (bool mean : {false, true}) {
-            Guarded samples(count), grid(count);
+          for (bool mean : {false, true})
+          for (bool table : {false, true}) {
+            Guarded samples(count), grid(count), primary_storage(count);
+            auto* primary = reinterpret_cast<float*>(primary_storage.data) + count;
+            for (std::size_t i = 0; i < count; ++i) primary[i] = .25f + float(i % 13);
             auto expected = buffer<std::complex<float>>(count), original_grid = expected;
             for (std::size_t i = 0; i < count; ++i) {
               samples.data[i] = expected[i] = {float(int(i % 19) - 9), float(int(i % 23) - 11)};
               grid.data[i] = original_grid[i] = {float(i % 5) * .25f, float(i % 3) * .5f};
             }
             SpectralParams p{type, 9, .5f, 25, 100, exponent, .25f};
+            if (table) {
+              p.primary_mode = PrimaryMode::Table;
+              p.primary = {primary, count};
+            }
             spectral_scalar(expected.data(), mean ? grid.data : nullptr, count, .5f, p);
             optimized(samples.data, mean ? grid.data : nullptr, count, .5f, p);
             CHECK(std::memcmp(grid.data, original_grid.data(), count * sizeof(std::complex<float>)) == 0);
