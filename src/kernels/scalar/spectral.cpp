@@ -2,11 +2,8 @@
 #include <algorithm>
 
 namespace neo_fft {
-void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
+void detail::spectral_prevalidated(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
                      const SpectralParams& p) {
-  require(p.primary_mode != PrimaryMode::Table || p.primary.size() == count, "primary table shape mismatch");
-  require(!p.enhancement.sharpen || p.enhancement.sharpen_window.size() == count, "sharpen table shape mismatch");
-  require(!p.enhancement.dehalo || p.enhancement.halo_window.size() == count, "halo table shape mismatch");
   for (std::size_t k = 0; k < count; ++k) {
     const float a = p.primary_mode == PrimaryMode::Table ? p.primary[k] : p.a;
     const float mr = grid ? finite(scale * grid[k].real()) : 0;
@@ -55,6 +52,18 @@ void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, st
   }
 }
 
+void spectral_scalar(std::complex<float>* x, const std::complex<float>* grid, std::size_t count,
+              float scale, const SpectralParams& p) {
+  validate_spectral_shape(p, count);
+  detail::spectral_prevalidated(x, grid, count, scale, p);
+}
+void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                   float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
+                   std::complex<float>* out) {
+  validate_temporal_shape(T, c, bins, noise);
+  detail::temporal_prevalidated(spectra, T, c, bins, degrid, grid, noise, lower, out);
+}
+
 const Fft3dTwiddles& get_fft3d_twiddles() noexcept {
   static const Fft3dTwiddles twiddles = []() {
     Fft3dTwiddles t{};
@@ -78,12 +87,9 @@ const Fft3dTwiddles& get_fft3d_twiddles() noexcept {
   return twiddles;
 }
 
-void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+void detail::temporal_prevalidated(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
                            float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                            std::complex<float>* out) {
-  require(noise.mode != PrimaryMode::Table || noise.table.size() == bins, "noise table shape mismatch");
-  require(T >= 1 && T <= 5, "FFT3D invalid T");
-  require(c >= 0 && c < T, "FFT3D invalid c");
   if (T == 1) {
     const float mr_scale = (grid && degrid != 0.0f && grid[0].real() != 0.0f)
                                ? finite((degrid * spectra[0][0].real()) / grid[0].real())
@@ -159,15 +165,15 @@ void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int
 }
 
 #if !NEO_FFT_ENABLE_HIGHWAY
-SpectralKernel select_spectral(int opt) {
-  return spectral_scalar;
+SpectralKernel select_spectral(int opt, bool prevalidated) {
+  return prevalidated ? detail::spectral_prevalidated : spectral_scalar;
 }
 const char* spectral_target(int opt) {
   select_spectral(opt);
   return "scalar (Highway disabled)";
 }
-Fft3dTemporalKernel select_fft3d_temporal(int opt) {
-  return fft3d_temporal_scalar;
+Fft3dTemporalKernel select_fft3d_temporal(int opt, bool prevalidated) {
+  return prevalidated ? detail::temporal_prevalidated : fft3d_temporal_scalar;
 }
 const char* fft3d_temporal_target(int opt) {
   select_fft3d_temporal(opt);

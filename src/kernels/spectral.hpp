@@ -25,6 +25,16 @@ struct SpectralParams {
   span2d::Span<const float> primary{};
   Enhancement enhancement{};
 };
+inline void validate_spectral_shape(const SpectralParams& p, std::size_t count) {
+  require(p.primary_mode != PrimaryMode::Table || p.primary.size() == count, "primary table shape mismatch");
+  require(!p.enhancement.sharpen || p.enhancement.sharpen_window.size() == count, "sharpen table shape mismatch");
+  require(!p.enhancement.dehalo || p.enhancement.halo_window.size() == count, "halo table shape mismatch");
+}
+inline void validate_temporal_shape(int T, int c, std::size_t bins, NoisePower noise) {
+  require(noise.mode != PrimaryMode::Table || noise.table.size() == bins, "noise table shape mismatch");
+  require(T >= 1 && T <= 5, "FFT3D invalid T");
+  require(c >= 0 && c < T, "FFT3D invalid c");
+}
 using SpectralKernel = void (*)(std::complex<float>*, const std::complex<float>*, std::size_t, float,
                                 const SpectralParams&);
 void spectral_scalar(std::complex<float>* spectrum, const std::complex<float>* grid, std::size_t count,
@@ -41,14 +51,21 @@ using Fft3dTemporalKernel = void (*)(const std::complex<float>* const* spectra, 
 void fft3d_temporal_scalar(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
                            float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                            std::complex<float>* out);
-Fft3dTemporalKernel select_fft3d_temporal(int opt);
+Fft3dTemporalKernel select_fft3d_temporal(int opt, bool prevalidated = false);
 const char* fft3d_temporal_target(int opt);
 
 void fft3d_temporal_filter(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
                            float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                            std::complex<float>* out);
 
-SpectralKernel select_spectral(int opt);
+// Plan validates immutable shapes once before its block loop. All numeric
+// intermediate checks remain active in these internal entry points.
+namespace detail {
+void spectral_prevalidated(std::complex<float>*, const std::complex<float>*, std::size_t, float, const SpectralParams&);
+void temporal_prevalidated(const std::complex<float>* const*, int, int, std::size_t, float,
+                           const std::complex<float>*, NoisePower, float, std::complex<float>*);
+}
+SpectralKernel select_spectral(int opt, bool prevalidated = false);
 const char* spectral_target(int opt);
 std::size_t optimal_l2_working_set_bytes() noexcept;
 int optimal_simd_lanes() noexcept;

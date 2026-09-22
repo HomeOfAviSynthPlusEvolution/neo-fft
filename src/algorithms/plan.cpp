@@ -90,7 +90,7 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c, std::shared_ptr<r
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), temporal_size(std::max(1, c.bt)), fft(c.bh, c.bw),
       executor_(executor ? std::move(executor) : std::make_shared<runtime::Executor>(c.mt ? 3 : 1)), denoise_(c.bt != -1),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
-      kernel_(select_spectral(c.opt)), temporal_kernel_(select_fft3d_temporal(c.opt)),
+      kernel_(select_spectral(c.opt, true)), temporal_kernel_(select_fft3d_temporal(c.opt, true)),
       spatial_(select_spatial(c.opt)), model_(select_model(c.opt)), mean_scale_(c.degrid),
       pool_(runtime::make_workspace_budget(geometry, fft.samples(),
                                            fft.bins() * std::size_t(std::max(1, c.bt) + 1), true,
@@ -167,7 +167,7 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c, std::shared_ptr<r
 }
 Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<const DFTNoise> noise, std::shared_ptr<runtime::Executor> executor, std::shared_ptr<runtime::Retention> retention)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), temporal_size(c.tbsize),
-      fft(c.block, c.block), executor_(executor ? std::move(executor) : std::make_shared<runtime::Executor>(std::clamp(c.threads,1,16))), kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), model_(select_model(c.opt)),
+      fft(c.block, c.block), executor_(executor ? std::move(executor) : std::make_shared<runtime::Executor>(std::clamp(c.threads,1,16))), kernel_(select_spectral(c.opt, true)), spatial_(select_spatial(c.opt)), model_(select_model(c.opt)),
       mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
       pool_(runtime::make_workspace_budget(
           geometry,
@@ -388,6 +388,9 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     parameters.primary_mode = PrimaryMode::Table;
     parameters.primary = {dft_model->data(),dft_model->size()};
   }
+  validate_spectral_shape(parameters, algorithm == Algorithm::DFTTest ? std::size_t(T_slots)*fft.bins() : fft.bins());
+  if (enhancement_params_.enhancement.active()) validate_spectral_shape(enhancement_params_, fft.bins());
+  if (kalman) require(kalman->last.size()==state_bins(),"Kalman checkpoint shape differs");
   ws.reset();
   for (int j = 0; j < T_slots; ++j) {
     if (!preview_ && !kalman && !temporal_ola_) pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
@@ -415,6 +418,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
       if (parameters.primary_mode == PrimaryMode::Table) { noise.mode = PrimaryMode::Table; noise.table = parameters.primary; noise.multiplier = float(T_slots); }
       else noise.uniform = ((float(T_slots) * sigma_eff_) * sigma_eff_) / norm_;
     }
+    validate_temporal_shape(T_slots, c, fft.bins(), noise);
     const float lower = (beta_ - 1.0f) / beta_;
     const float* wx_a = wx_.analysis.data();
     const float* wx_s = wx_.synthesis.data();
@@ -441,7 +445,6 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
 
           fft.forward(blk, ws.spectrum(0).data());
           } else {
-            require(kalman->last.size()==state_bins(),"Kalman checkpoint shape differs");
             const auto offset=(std::size_t(by)*gx.count+bx_start)*fft.bins();
             std::copy_n(kalman->last.data()+offset,fft.bins(),ws.spectrum().data());
           }

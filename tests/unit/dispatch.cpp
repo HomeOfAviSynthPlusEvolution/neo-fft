@@ -77,6 +77,24 @@ int main() {
       SpectralParams p;p.type=4;p.a=1;p.low=p.high=1e20f;
       rejects([&]{select_spectral(opt)(values.data(),nullptr,values.size(),0,p);});
     }
+    // Standalone kernels retain shape admission; the Plan-only path skips
+    // shapes, not numeric overflow checks.
+    for(int opt:{0,1}) {
+      std::complex<float> value{1,0};
+      SpectralParams p;p.primary_mode=PrimaryMode::Table;
+      rejects([&]{select_spectral(opt)(&value,nullptr,1,0,p);});
+      p={};p.enhancement.sharpen=1;
+      rejects([&]{select_spectral(opt)(&value,nullptr,1,0,p);});
+      p={};p.enhancement.dehalo=1;
+      rejects([&]{select_spectral(opt)(&value,nullptr,1,0,p);});
+      const std::complex<float>* slots[]={&value};
+      rejects([&]{select_fft3d_temporal(opt)(slots,0,0,1,0,nullptr,{},0,&value);});
+      rejects([&]{select_fft3d_temporal(opt)(slots,1,1,1,0,nullptr,{},0,&value);});
+      NoisePower noise;noise.mode=PrimaryMode::Table;
+      rejects([&]{select_fft3d_temporal(opt)(slots,1,0,1,0,nullptr,noise,0,&value);});
+      p={};p.type=4;p.a=1;p.low=p.high=1e20f;
+      rejects([&]{select_spectral(opt,true)(&value,nullptr,1,0,p);});
+    }
     const auto optimized = select_spectral(0);
     optimized(nullptr, nullptr, 0, 0, {});
     for (int type = -1; type <= 4; ++type)

@@ -8,11 +8,8 @@ HWY_BEFORE_NAMESPACE();
 namespace neo_fft {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
-void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
+void SpectralPrevalidated(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
               const SpectralParams& p) {
-  require(p.primary_mode != PrimaryMode::Table || p.primary.size() == count, "primary table shape mismatch");
-  require(!p.enhancement.sharpen || p.enhancement.sharpen_window.size() == count, "sharpen table shape mismatch");
-  require(!p.enhancement.dehalo || p.enhancement.halo_window.size() == count, "halo table shape mismatch");
   const hn::ScalableTag<float> d;
   if (!count)
     return;
@@ -126,15 +123,12 @@ void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size
     tail.primary = {p.primary.data() + k, count - k};
   if (p.enhancement.sharpen) tail.enhancement.sharpen_window = {p.enhancement.sharpen_window.data() + k, count - k};
   if (p.enhancement.dehalo) tail.enhancement.halo_window = {p.enhancement.halo_window.data() + k, count - k};
-  spectral_scalar(x + k, grid ? grid + k : nullptr, count - k, scale, tail);
+  detail::spectral_prevalidated(x + k, grid ? grid + k : nullptr, count - k, scale, tail);
 }
 
-void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
                    float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                    std::complex<float>* out) {
-  require(noise.mode != PrimaryMode::Table || noise.table.size() == bins, "noise table shape mismatch");
-  require(T >= 1 && T <= 5, "FFT3D invalid T");
-  require(c >= 0 && c < T, "FFT3D invalid c");
   if (!bins)
     return;
 
@@ -289,6 +283,18 @@ void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std:
   }
 }
 
+void Spectral(std::complex<float>* x, const std::complex<float>* grid, std::size_t count,
+              float scale, const SpectralParams& p) {
+  validate_spectral_shape(p, count);
+  SpectralPrevalidated(x, grid, count, scale, p);
+}
+void Fft3dTemporal(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                   float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
+                   std::complex<float>* out) {
+  validate_temporal_shape(T, c, bins, noise);
+  Fft3dTemporalPrevalidated(spectra, T, c, bins, degrid, grid, noise, lower, out);
+}
+
 const char* Target() {
   return hwy::TargetName(HWY_TARGET);
 }
@@ -303,17 +309,21 @@ HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 namespace neo_fft {
 HWY_EXPORT(Spectral);
+HWY_EXPORT(SpectralPrevalidated);
 HWY_EXPORT(Fft3dTemporal);
+HWY_EXPORT(Fft3dTemporalPrevalidated);
 HWY_EXPORT(Target);
 HWY_EXPORT(SimdLanes);
-SpectralKernel select_spectral(int opt) {
+SpectralKernel select_spectral(int opt, bool prevalidated) {
+  if (prevalidated) return opt == 1 ? detail::spectral_prevalidated : HWY_DYNAMIC_DISPATCH(SpectralPrevalidated);
   return opt == 1 ? spectral_scalar : HWY_DYNAMIC_DISPATCH(Spectral);
 }
 const char* spectral_target(int opt) {
   select_spectral(opt);
   return opt == 1 ? "scalar" : HWY_DYNAMIC_DISPATCH(Target)();
 }
-Fft3dTemporalKernel select_fft3d_temporal(int opt) {
+Fft3dTemporalKernel select_fft3d_temporal(int opt, bool prevalidated) {
+  if (prevalidated) return opt == 1 ? detail::temporal_prevalidated : HWY_DYNAMIC_DISPATCH(Fft3dTemporalPrevalidated);
   return opt == 1 ? fft3d_temporal_scalar : HWY_DYNAMIC_DISPATCH(Fft3dTemporal);
 }
 const char* fft3d_temporal_target(int opt) {
