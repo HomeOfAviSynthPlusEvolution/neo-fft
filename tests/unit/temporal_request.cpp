@@ -47,7 +47,36 @@ std::vector<float> run(Filter::State& state,int n,int& live,int fail=-1,bool fai
   auto out=request.finish({32,24,state.source.num_frames,state.source.format,{}},{&state.source,1},state,factory);
   auto view=out.view();const auto* p=static_cast<const float*>(view.plane(0).data);return {p,p+32*24};
 }
+void unique_fetches() {
+  struct Provider:ds::VideoFrameProvider {
+    Pixels source;
+    std::vector<int> fetched;
+    ds::Result<ds::RequestedVideoFrame> get(int,int n)override {
+      fetched.push_back(n);
+      return ds::Result<ds::RequestedVideoFrame>::success({0,n,source.read(),{}});
+    }
+  } provider;
+  auto state=make_state();
+  state.source.num_frames=100;
+  Pixels output;
+  for(const auto& [n,expected]:std::vector<std::pair<int,std::vector<int>>>{{0,{0,1,2,3}},{8,{6,7,8,9,10,11}}}) {
+    provider.fetched.clear();
+    ds::VideoProcessContext ctx{n,provider,output.write(),&state};
+    CHECK(Filter::process(ctx).has_value());
+    CHECK(provider.fetched==expected);
+  }
+  DFTConfig centered;centered.tbsize=5;centered.block=4;centered.overlap=2;centered.opt=1;
+  state.temporal_mode=0;state.temporal_size=5;
+  state.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},centered);
+  for(const auto& [n,expected]:std::vector<std::pair<int,std::vector<int>>>{{0,{0,1,2}},{8,{6,7,8,9,10}}}) {
+    provider.fetched.clear();
+    ds::VideoProcessContext ctx{n,provider,output.write(),&state};
+    CHECK(Filter::process(ctx).has_value());
+    CHECK(provider.fetched==expected);
+  }
+}
 int main(){try {
+  unique_fetches();
   for(bool sample:{false,true}) {
     int live=0;auto state=make_state(sample),clean=make_state(sample);
     const auto expected=run(clean,8,live);CHECK(live==0);

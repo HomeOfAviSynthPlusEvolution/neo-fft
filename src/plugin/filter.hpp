@@ -365,6 +365,7 @@ struct Filter {
     int T = 1;
     std::vector<ds::RequestedVideoFrame> frames_holder;
     std::vector<int> targets;
+    std::vector<std::size_t> slot_to_frame;
 
     if (!has_active_plans) {
       frames_holder.reserve(1);
@@ -383,20 +384,28 @@ struct Filter {
       }
     } else {
       T = state.temporal_size;
+      std::vector<int> slot_frames;
       if(state.temporal_mode==1) {
         for(const auto& block:temporal_blocks(n,N,T,state.temporal_overlap)) {
           targets.push_back(block.target);
-          for(int z=0;z<T;++z)frames_holder.push_back(unwrap(ctx.frames.get(0,block.slots[z])));
+          for(int z=0;z<T;++z)slot_frames.push_back(block.slots[z]);
         }
       } else {
       const int c = T / 2;
-      frames_holder.reserve(T);
+      slot_frames.reserve(T);
       for (int j = 0; j < T; ++j) {
         const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
                                    : ((n < c - j) ? 0 : (n - (c - j)));
-        frames_holder.push_back(unwrap(ctx.frames.get(0, real)));
+        slot_frames.push_back(real);
       }
       }
+      auto unique_frames=slot_frames;
+      std::sort(unique_frames.begin(),unique_frames.end());
+      unique_frames.erase(std::unique(unique_frames.begin(),unique_frames.end()),unique_frames.end());
+      frames_holder.reserve(unique_frames.size());
+      for(int frame:unique_frames)frames_holder.push_back(unwrap(ctx.frames.get(0,frame)));
+      slot_to_frame.reserve(slot_frames.size());
+      for(int frame:slot_frames)slot_to_frame.push_back(std::size_t(std::lower_bound(unique_frames.begin(),unique_frames.end(),frame)-unique_frames.begin()));
     }
 
     for (const auto& holder : frames_holder) {
@@ -452,15 +461,16 @@ struct Filter {
       require(d.width == w && d.height == h, "frame plane dimensions differ from plan");
 
       std::vector<ds::PlaneView> plane_views;
-      plane_views.reserve(frames_holder.size());
+      plane_views.reserve(slot_to_frame.empty() ? frames_holder.size() : slot_to_frame.size());
       for (std::size_t j = 0; j < frames_holder.size(); ++j) {
         const auto& s = frames_holder[j].frame.plane(p);
         require(s.width == w && s.height == h, "frame plane dimensions differ from plan");
-        plane_views.push_back(s);
+        if(slot_to_frame.empty())plane_views.push_back(s);
       }
+      for(std::size_t index:slot_to_frame)plane_views.push_back(frames_holder[index].frame.plane(p));
 
       // The midpoint of concatenated block slots need not be frame n.
-      if(!state.plans[p] && !targets.empty())plane_views={frames_holder[std::size_t(targets[0])].frame.plane(p)};
+      if(!state.plans[p] && !targets.empty())plane_views={frames_holder[slot_to_frame[std::size_t(targets[0])]].frame.plane(p)};
       switch (state.source.format.sample_format) {
         case ds::SampleFormat::UInt8:
           plane<std::uint8_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
