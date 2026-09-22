@@ -190,8 +190,11 @@ inline DFTConfig dft_config(Params p) {
   require(c.tbsize >= 1 && c.tbsize <= 15 && c.tbsize % 2 == 1, "DFTTest tbsize must be odd integer in 1..15");
   p.same("tmode", 0);
   p.integer("tosize", 0);
-  require(p.integers("nlocation").empty(), "unsupported phase-1 nlocation");
-  p.same("alpha", c.ftype == 0 ? 5.0f : 7.0f);
+  const auto locations = p.integers("nlocation");
+  require(locations.size()%4 == 0 && locations.size()/4 <= 500, "DFTTest nlocation requires up to 500 quadruples");
+  for (std::size_t i=0;i<locations.size();i+=4)
+    c.locations.push_back({int(locations[i]),int(locations[i+1]),int(locations[i+2]),int(locations[i+3])});
+  c.alpha = p.number("alpha", c.ftype == 0 ? 5.0f : 7.0f);
   c.curves.shared = p.numbers("slocation");
   c.curves.x = p.numbers("ssx");
   c.curves.y = p.numbers("ssy");

@@ -56,6 +56,10 @@ void validate(const FFT3DConfig& c) {
 }
 void validate(const DFTConfig& c) {
   validate(c.curves);
+  require(c.locations.size() <= 500, "DFTTest nlocation exceeds 500 tuples");
+  const float alpha = c.alpha.value_or(c.ftype == 0 ? 5.0f : 7.0f);
+  require(std::isfinite(alpha) && alpha > 0, "DFTTest alpha must be positive");
+  for (const auto& n : c.locations) require(n.frame >= 0 && n.plane >= 0 && n.y >= 0 && n.x >= 0, "DFTTest negative sample coordinate");
   require(c.block > 0 && (c.mode == 0 || c.mode == 1), "DFTTest invalid sbsize/smode");
   require(c.mode != 0 || c.block % 2 == 1, "DFTTest center mode requires odd sbsize");
   require(c.mode == 0 || (c.overlap >= 0 && c.overlap < c.block), "DFTTest invalid sosize");
@@ -137,7 +141,7 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
     require(grid_[0].real() != 0, "FFT3D unusable grid DC");
   }
 }
-Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
+Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<const DFTNoise> noise)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), temporal_size(c.tbsize),
       fft(c.block, c.block), kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)),
       mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
@@ -158,15 +162,17 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c)
   const float volume = float(c.tbsize) * float(c.block) * float(c.block);
   for (std::size_t i = 0; i < h_.size(); ++i)
     h_synthesis_[i] = h_[i] * volume;
+  const bool sampled = c.ftype < 2 && !c.locations.empty();
+  if (sampled) dft_noise_ = noise ? std::move(noise) : std::make_shared<DFTNoise>(c);
   const float scale = c.ftype < 2 ? win.wscale : 1.0f;
   params_ = {c.ftype,
-             c.curves.empty() ? finite(c.sigma / scale) : 0,
+             !sampled && c.curves.empty() ? finite(c.sigma / scale) : 0,
              finite(c.sigma2 / scale),
              finite(c.pmin / win.wscale),
              finite(c.pmax / win.wscale),
              c.f0beta,
              0};
-  if (!c.curves.empty()) {
+  if (!sampled && !c.curves.empty()) {
     primary_ = dft_profile(c.curves, c.tbsize, c.block, c.sigma, scale);
     params_.primary_mode = PrimaryMode::Table;
     params_.primary = {primary_.data(), primary_.size()};
@@ -287,6 +293,12 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     require(bool(sampled_model), "FFT3D sampled model not initialized");
     parameters.primary_mode = PrimaryMode::Table;
     parameters.primary = {sampled_model->data(), sampled_model->size()};
+  }
+  const auto dft_model = dft_noise_ ? dft_noise_->power() : runtime::PublishedModel::Model{};
+  if (dft_noise_) {
+    require(bool(dft_model), "DFTTest sample model not initialized");
+    parameters.primary_mode = PrimaryMode::Table;
+    parameters.primary = {dft_model->data(),dft_model->size()};
   }
   ws.reset();
   for (int j = 0; j < T_slots; ++j) {
@@ -414,7 +426,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           fft.forward(blk, ws.spectrum(0).data());
           auto* spec_b = ws.spectrum(0).data();
           const float scale = grid_.empty() ? 0 : (mean_scale_ * spec_b[0].real()) / grid_[0].real();
-          kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, params_);
+          kernel_(spec_b, grid_.empty() ? nullptr : grid_.data(), fft.bins(), scale, parameters);
           fft.inverse(spec_b, ws.inverse(0).data());
 
           if (center_) {
@@ -461,7 +473,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           const float g_ratio = (!grid_.empty() && mean_scale_ != 0.0f && grid_[0].real() != 0.0f)
                                     ? (mean_scale_ * spec_3d[0].real() / grid_[0].real())
                                     : 0.0f;
-          kernel_(spec_3d, grid_.empty() ? nullptr : grid_.data(), bins_3d, g_ratio, params_);
+          kernel_(spec_3d, grid_.empty() ? nullptr : grid_.data(), bins_3d, g_ratio, parameters);
 
           float* inv_3d = ws.inverse(0).data();
           fft3d_->inverse(spec_3d, inv_3d);

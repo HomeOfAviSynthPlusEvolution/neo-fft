@@ -16,6 +16,7 @@ struct Filter {
     int temporal_size = 1;
     int pattern_frame = 0;
     bool sampled = false;
+    std::shared_ptr<const DFTNoise> dft_noise;
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
     require(ctx.params && ctx.inputs.size() == 1, "missing clip or parameters");
@@ -26,7 +27,6 @@ struct Filter {
             "unsupported planar sample format");
     ds::validate_frame_dimensions(f, info.width, info.height);
     require(info.num_frames > 0, "clip frame count must be positive");
-    require(info.num_frames <= std::numeric_limits<int>::max() - 16, "clip frame count exceeds supported limit");
     Params params{*ctx.params};
     const auto config = [&] {
       if constexpr (A == Algorithm::FFT3D)
@@ -36,6 +36,13 @@ struct Filter {
     }();
     if constexpr (A == Algorithm::DFTTest) {
       require(config.tbsize <= info.num_frames, "tbsize must be less than or equal to the number of frames");
+      for (const auto& location : config.locations) {
+        require(location.frame <= info.num_frames-config.tbsize, "DFTTest sample interval outside clip");
+        require(location.plane < f.plane_count, "DFTTest sample plane outside format");
+        const bool chroma = f.color_family == ds::ColorFamily::Yuv && location.plane > 0;
+        const int w=info.width >> (chroma ? f.subsampling_w : 0), h=info.height >> (chroma ? f.subsampling_h : 0);
+        require(location.x <= w-config.block && location.y <= h-config.block, "DFTTest sample rectangle outside plane");
+      }
     }
     auto planes = params.integers("planes");
     std::array<bool, 3> selected{};
@@ -57,10 +64,11 @@ struct Filter {
         try {
           const bool chroma = f.color_family == ds::ColorFamily::Yuv && p > 0;
           const int w = info.width >> (chroma ? f.subsampling_w : 0), h = info.height >> (chroma ? f.subsampling_h : 0);
-          state.plans[p] = std::make_shared<Plan>(
-              w, h,
-              SampleFormat{ds::bits_per_sample(f.sample_format), f.sample_format == ds::SampleFormat::Float32, chroma},
-              config);
+          const SampleFormat sample_format{ds::bits_per_sample(f.sample_format),f.sample_format == ds::SampleFormat::Float32,chroma};
+          if constexpr (A == Algorithm::DFTTest) {
+            state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config,state.dft_noise);
+            state.dft_noise = state.plans[p]->dft_noise();
+          } else state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config);
         } catch (const std::exception& e) {
           throw std::invalid_argument("plane " + std::to_string(p) + ": " + e.what());
         }
@@ -76,7 +84,7 @@ struct Filter {
         {{info.width, info.height, info.num_frames, f, info.fps}, std::move(state)});
   }
   static ds::VideoRequestPattern request_pattern(int, const State& state) {
-    return state.temporal_size > 1 || state.sampled ? ds::VideoRequestPattern::General : ds::VideoRequestPattern::StrictSpatial;
+    return state.temporal_size > 1 || state.sampled || state.dft_noise ? ds::VideoRequestPattern::General : ds::VideoRequestPattern::StrictSpatial;
   }
   static ds::Result<ds::VideoRequestResult> request(ds::VideoRequestContext& ctx) {
     const auto& state = ctx.state<State>();
@@ -105,6 +113,8 @@ struct Filter {
         }
       }
     } else {
+      if (state.dft_noise) for (const auto& location : state.dft_noise->locations)
+        for (int j=0;j<state.temporal_size;++j) ctx.request_frame(0,location.frame+j);
       const int T = state.temporal_size;
       const int c = T / 2;
       for (int j = 0; j < T; ++j) {
@@ -145,6 +155,17 @@ struct Filter {
     const auto s = checked_plane(static_cast<const T*>(static_cast<const void*>(src.data)), src.width, src.height,
         src.stride_bytes, plane_extent<T>(src.width, src.height, src.stride_bytes));
     plan.prepare_pattern(s);
+  }
+  template<class T> static void gather_noise(const ds::PlaneView& view, const NoiseLocation& location,
+                                            int S, int bits, span2d::Span<float> out) {
+    const auto source = checked_plane(static_cast<const T*>(static_cast<const void*>(view.data)),view.width,view.height,
+        view.stride_bytes,plane_extent<T>(view.width,view.height,view.stride_bytes));
+    require(location.x <= view.width-S && location.y <= view.height-S, "sample frame rectangle differs from plan");
+    for (int y=0;y<S;++y) for (int x=0;x<S;++x) {
+      const float v=finite(float(source.row_ptr(location.y+y)[location.x+x]));
+      if constexpr (std::is_same_v<T,float>) out[std::size_t(y)*S+x]=finite(v*255.0f);
+      else out[std::size_t(y)*S+x]=v/float(1 << (bits-8));
+    }
   }
   static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx) {
     const auto& state = ctx.state<State>();
@@ -207,6 +228,23 @@ struct Filter {
           }
         }
       }
+    }
+    if constexpr (A == Algorithm::DFTTest) {
+      if (state.dft_noise) state.dft_noise->prepare([&](const NoiseLocation& location,int z,span2d::Span<float> out) {
+        const auto sample=unwrap(ctx.frames.get(0,location.frame+z));
+        require(sample.frame.format==state.source.format && sample.frame.plane_count==state.source.format.plane_count,
+                "sample frame format differs from plan");
+        const auto& view=sample.frame.plane(location.plane);
+        const bool chroma=state.source.format.color_family==ds::ColorFamily::Yuv && location.plane>0;
+        require(view.width==(state.source.width >> (chroma ? state.source.format.subsampling_w : 0)) &&
+                view.height==(state.source.height >> (chroma ? state.source.format.subsampling_h : 0)), "sample plane dimensions differ from plan");
+        const int S=state.dft_noise->block_size, bits=ds::bits_per_sample(state.source.format.sample_format);
+        switch (state.source.format.sample_format) {
+          case ds::SampleFormat::UInt8: gather_noise<std::uint8_t>(view,location,S,bits,out); break;
+          case ds::SampleFormat::Float32: gather_noise<float>(view,location,S,bits,out); break;
+          default: gather_noise<std::uint16_t>(view,location,S,bits,out); break;
+        }
+      });
     }
     for (int p = 0; p < ctx.dst.plane_count; ++p) {
       const auto& d = ctx.dst.plane(p);

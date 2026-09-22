@@ -104,7 +104,7 @@ if(NEO_FFT_ENABLE_SIMD AND ("avx2" IN_LIST NEO_FFT_FFT_TARGETS))
 endif()
 
 add_library(neo_fft_core STATIC src/spectral/fft.cpp src/algorithms/windows.cpp
-  src/algorithms/plan.cpp src/algorithms/profile.cpp src/algorithms/fft3d_profile.cpp src/kernels/scalar/spectral.cpp src/kernels/scalar/spatial.cpp
+  src/algorithms/plan.cpp src/algorithms/profile.cpp src/algorithms/fft3d_profile.cpp src/algorithms/dft_noise.cpp src/kernels/scalar/spectral.cpp src/kernels/scalar/spatial.cpp
   src/runtime/workspace.cpp src/runtime/workspace_pool.cpp)
 target_sources(neo_fft_core PRIVATE ${NEO_FFT_FFT_OBJECTS})
 target_compile_definitions(neo_fft_core PRIVATE NEO_FFT_ENABLE_HIGHWAY=$<BOOL:${NEO_FFT_ENABLE_HIGHWAY}>)
@@ -173,6 +173,9 @@ if(NEO_FFT_BUILD_VAPOURSYNTH)
       add_test(NAME vs.fft3d_sampling COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/fft3d_sampling.py" --plugin "$<TARGET_FILE:neo_fft>")
       set_tests_properties(vs.fft3d_sampling PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
+      add_test(NAME vs.dft_sampling COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/dft_sampling.py" --plugin "$<TARGET_FILE:neo_fft>")
+      set_tests_properties(vs.dft_sampling PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
       add_test(NAME harness.protocol COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential/test_protocol.py")
       set_tests_properties(harness.protocol PROPERTIES LABELS "spec")
@@ -189,13 +192,17 @@ if(BUILD_TESTING)
   target_link_libraries(neo_fft_fft3d_model_tests PRIVATE neo_fft_core)
   add_test(NAME core.fft3d_models COMMAND neo_fft_fft3d_model_tests)
 
+  add_executable(neo_fft_dft_noise_tests tests/unit/dft_noise.cpp)
+  target_link_libraries(neo_fft_dft_noise_tests PRIVATE neo_fft_core DualSynth::dualsynth)
+  add_test(NAME core.dft_noise COMMAND neo_fft_dft_noise_tests)
+
   add_executable(neo_fft_profile_tests tests/unit/profiles.cpp)
   target_link_libraries(neo_fft_profile_tests PRIVATE neo_fft_core)
   add_test(NAME core.profiles COMMAND neo_fft_profile_tests)
   set_tests_properties(core.profiles PROPERTIES LABELS "spec")
 
   add_executable(neo_fft_algorithm_tests tests/unit/algorithms.cpp)
-  target_link_libraries(neo_fft_algorithm_tests PRIVATE neo_fft_core)
+  target_link_libraries(neo_fft_algorithm_tests PRIVATE neo_fft_core DualSynth::dualsynth)
   add_test(NAME core.algorithms COMMAND neo_fft_algorithm_tests)
   set_tests_properties(core.algorithms PROPERTIES LABELS "spec")
 
@@ -212,7 +219,7 @@ if(BUILD_TESTING)
   # Match the plugin's self-contained MinGW runtime. An unrelated libstdc++ on
   # the host PATH must not prevent tests from starting (e.g. GCC 16 once ABI).
   if(MINGW)
-    foreach(test foundation profile fft3d_model algorithm dispatch workspace)
+    foreach(test foundation profile fft3d_model dft_noise algorithm dispatch workspace)
       target_link_options(neo_fft_${test}_tests PRIVATE -static -static-libgcc -static-libstdc++)
     endforeach()
   endif()

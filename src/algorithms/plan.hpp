@@ -1,6 +1,7 @@
 #pragma once
 #include "algorithms/windows.hpp"
 #include "algorithms/profile.hpp"
+#include "algorithms/dft_noise.hpp"
 #include "algorithms/fft3d_profile.hpp"
 #include <optional>
 #include "runtime/published_model.hpp"
@@ -29,13 +30,15 @@ struct DFTConfig {
   float sbeta = 2.5f, tbeta = 2.5f, sigma = 8, sigma2 = 8, pmin = 0, pmax = 500, f0beta = 1;
   bool zmean = true;
   DFTCurves curves;
+  std::vector<NoiseLocation> locations;
+  std::optional<float> alpha;
 };
 void validate(const FFT3DConfig& c);
 void validate(const DFTConfig& c);
 class Plan {
 public:
   Plan(int width, int height, SampleFormat format, const FFT3DConfig& config);
-  Plan(int width, int height, SampleFormat format, const DFTConfig& config);
+  Plan(int width, int height, SampleFormat format, const DFTConfig& config, std::shared_ptr<const DFTNoise> noise = {});
   const Geometry geometry;
   const SampleFormat format;
   const Algorithm algorithm;
@@ -60,6 +63,7 @@ public:
   void process(span2d::Span<const span2d::Plane<const float>> sources, span2d::Plane<float> dst,
                runtime::Workspace& ws) const;
 
+  std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
   bool preview() const { return preview_; }
   bool needs_pattern_frame() const { return sampled_ && denoise_; }
   bool pattern_ready() const { return bool(sampled_model_.get()); }
@@ -70,6 +74,7 @@ public:
   runtime::WorkspacePool& workspace_pool() const noexcept { return pool_; }
 
 private:
+  std::shared_ptr<const DFTNoise> dft_noise_;
   bool denoise_ = true, sampled_ = false, preview_ = false;
   int px_ = 0, py_ = 0;
   float pfactor_ = 0;

@@ -46,7 +46,7 @@ def main():
         fails(lambda:c.neo_fft.FFT3D(src,bt=1,**kwargs))
     for kwargs in [dict(dither=1),dict(threads=2),dict(fft_threads=2),dict(nlocation=[0]),dict(ssx=[1.]),
                    dict(ftype=5),dict(f0beta=0),dict(pmin=2,pmax=1),dict(sbsize=8,sosize=5),dict(swin=12),
-                   dict(smode=0,sbsize=4),dict(dither_seed=-1),dict(alpha=9)]:
+                   dict(smode=0,sbsize=4),dict(dither_seed=-1),dict(alpha=0)]:
         fails(lambda:c.neo_fft.DFTTest(src,tbsize=1,planes=[],**kwargs))
     c.neo_fft.DFTTest(src,tbsize=1,smode=0,sbsize=3,sosize=-999,tosize=-999,threads=-1,fft_threads=-1).get_frame(0)
     small=c.std.BlankClip(width=1,height=1,format=vs.GRAY8,color=[12])
