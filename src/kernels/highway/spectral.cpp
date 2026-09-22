@@ -185,6 +185,8 @@ void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T,
         grid_re=hn::Mul(hn::Mul(grid_re,hn::Set(d,ratio)),hn::Set(d,float(T)));
         grid_im=hn::Mul(hn::Mul(grid_im,hn::Set(d,ratio)),hn::Set(d,float(T)));
       }
+      const auto power_noise=noise.mode==PrimaryMode::Table
+        ? hn::Mul(hn::LoadU(d,noise.table.data()+k),hn::Set(d,noise.multiplier)) : noise_v;
       auto y_re=zero,y_im=zero;
       for(int m=0;m<T;++m) {
         auto re=zero,im=zero;
@@ -199,8 +201,6 @@ void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T,
         const auto power=hn::Add(hn::Mul(re,re),hn::Mul(im,im));
         non_finite=hn::Or(non_finite,hn::Not(hn::IsFinite(power)));
         const auto q=hn::Add(power,eps);
-        const auto power_noise=noise.mode==PrimaryMode::Table
-          ? hn::Mul(hn::LoadU(d,noise.table.data()+k),hn::Set(d,noise.multiplier)) : noise_v;
         const auto gain=hn::Max(hn::Div(hn::Sub(q,power_noise),q),lower_v);
         re=hn::Mul(re,gain);im=hn::Mul(im,gain);
         if(m==0) {re=hn::Add(re,grid_re);im=hn::Add(im,grid_im);}
@@ -259,11 +259,12 @@ void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T,
           R[m] = F[m];
         }
 
+        const float power_noise = noise.at(k);
         std::complex<float> R_filtered[5];
         for (int m = 0; m < T; ++m) {
           const float power = finite(R[m].real() * R[m].real() + R[m].imag() * R[m].imag());
           const float q = power + 1e-15f;
-          const float gain = std::max((q - noise.at(k)) / q, lower);
+          const float gain = std::max((q - power_noise) / q, lower);
           R_filtered[m] = gain * R[m];
         }
 

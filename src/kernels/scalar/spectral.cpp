@@ -136,11 +136,12 @@ void detail::temporal_prevalidated(const std::complex<float>* const* spectra, in
       R[m] = F[m];
     }
 
+    const float power_noise = noise.at(k);
     std::complex<float> R_filtered[5];
     for (int m = 0; m < T; ++m) {
       const float power = finite(R[m].real() * R[m].real() + R[m].imag() * R[m].imag());
       const float q = power + 1e-15f;
-      const float gain = std::max((q - noise.at(k)) / q, lower);
+      const float gain = std::max((q - power_noise) / q, lower);
       R_filtered[m] = gain * R[m];
     }
 
