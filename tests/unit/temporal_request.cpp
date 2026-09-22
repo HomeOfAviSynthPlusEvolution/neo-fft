@@ -75,8 +75,26 @@ void unique_fetches() {
     CHECK(provider.fetched==expected);
   }
 }
+void unique_requests() {
+  auto state=make_state(true);
+  state.source.num_frames=100;
+  const auto check=[&](int n,std::vector<ds::VideoFrameRequest> requests,const std::vector<int>& expected) {
+    ds::VideoRequestContext ctx{n,requests,{},&state};
+    CHECK(Filter::request(ctx).has_value());
+    std::vector<int> actual;
+    for(const auto& request:requests) {CHECK(request.input_index==0);actual.push_back(request.frame_number);}
+    CHECK(actual==expected);
+  };
+  check(8,{}, {1,2,3,4,6,7,8,9,10,11});
+  check(8,{{0,8}}, {8,1,2,3,4,6,7,9,10,11});
+  DFTConfig centered;centered.tbsize=5;centered.block=4;centered.overlap=2;centered.opt=1;
+  state.temporal_mode=0;state.temporal_size=5;state.dft_noise.reset();
+  state.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},centered);
+  check(0,{}, {0,1,2});
+}
 int main(){try {
   unique_fetches();
+  unique_requests();
   for(bool sample:{false,true}) {
     int live=0;auto state=make_state(sample),clean=make_state(sample);
     const auto expected=run(clean,8,live);CHECK(live==0);

@@ -254,19 +254,30 @@ struct Filter {
         }
       }
     } else {
+      std::vector<int> requested;
       if (state.dft_noise) for (const auto& location : state.dft_noise->locations)
-        for (int j=0;j<state.temporal_size;++j) ctx.request_frame(0,location.frame+j);
+        for (int j=0;j<state.temporal_size;++j) requested.push_back(location.frame+j);
       const int T = state.temporal_size;
       if(state.temporal_mode==1) {
         for(const auto& block:temporal_blocks(n,N,T,state.temporal_overlap))
-          for(int z=0;z<T;++z)ctx.request_frame(0,block.slots[z]);
-        return ds::Result<ds::VideoRequestResult>::success({});
+          for(int z=0;z<T;++z)requested.push_back(block.slots[z]);
+      } else {
+        const int c = T / 2;
+        for (int j = 0; j < T; ++j) {
+          const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
+                                     : ((n < c - j) ? 0 : (n - (c - j)));
+          requested.push_back(real);
+        }
       }
-      const int c = T / 2;
-      for (int j = 0; j < T; ++j) {
-        const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
-                                   : ((n < c - j) ? 0 : (n - (c - j)));
-        ctx.request_frame(0, real);
+      std::sort(requested.begin(),requested.end());
+      requested.erase(std::unique(requested.begin(),requested.end()),requested.end());
+      if(ctx.requests.empty()) {
+        // DualSynth's request_frame performs a linear duplicate search. The
+        // sorted set is already unique, so append it directly in the common path.
+        ctx.requests.reserve(requested.size());
+        for(int frame:requested)ctx.requests.push_back({0,frame});
+      } else {
+        for(int frame:requested)ctx.request_frame(0,frame);
       }
     }
     return ds::Result<ds::VideoRequestResult>::success({});
