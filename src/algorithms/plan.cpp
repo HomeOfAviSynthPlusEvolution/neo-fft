@@ -344,25 +344,35 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
             "FFT3D sources size must match plan temporal_size or single-frame fallback");
   }
   require(ws.budget().temporal_slots >= T_slots, "workspace temporal slots insufficient");
+  require(dst.width() == gx.length && dst.height() == gy.length, "frame dimensions differ from plan");
+  require(format.floating == std::is_same_v<T, float> && (format.floating || ((format.bits == 8) == (sizeof(T) == 1))),
+          "frame storage differs from plan");
+  const auto de = plane_extent<T>(dst.width(), dst.height(), dst.stride_bytes());
+  checked_plane(dst.data(), dst.width(), dst.height(), dst.stride_bytes(), de);
+  // Endpoint clamps and overlapping temporal blocks reuse identical immutable
+  // planes. Validate each physical view once, retaining all logical FFT slots.
+  std::array<std::size_t, 225> unique{};
+  std::size_t unique_count = 0;
   for (std::size_t j = 0; j < sources.size(); ++j) {
     const auto& src = sources[j];
-    require(src.width() == gx.length && src.height() == gy.length && dst.width() == gx.length &&
-                dst.height() == gy.length,
-            "frame dimensions differ from plan");
-    require(format.floating == std::is_same_v<T, float> && (format.floating || ((format.bits == 8) == (sizeof(T) == 1))),
-            "frame storage differs from plan");
+    require(src.width() == gx.length && src.height() == gy.length, "frame dimensions differ from plan");
+    bool seen = false;
+    for (std::size_t k = 0; k < unique_count; ++k) {
+      const auto& previous = sources[unique[k]];
+      if (src.data() == previous.data() && src.stride_bytes() == previous.stride_bytes()) {
+        seen = true;
+        break;
+      }
+    }
+    if (seen) continue;
     const auto se = plane_extent<T>(src.width(), src.height(), src.stride_bytes());
     checked_plane(src.data(), src.width(), src.height(), src.stride_bytes(), se);
+    disjoint(src.data(), se, dst.data(), de);
     if constexpr (std::is_same_v<T, float>) {
       for (int y = 0; !preview_ && !kalman && y < src.height(); ++y)
         spatial_.validate_finite(src.row_ptr(y), std::size_t(src.width()));
     }
-  }
-  const auto de = plane_extent<T>(dst.width(), dst.height(), dst.stride_bytes());
-  checked_plane(dst.data(), dst.width(), dst.height(), dst.stride_bytes(), de);
-  for (std::size_t j = 0; j < sources.size(); ++j) {
-    const auto se = plane_extent<T>(sources[j].width(), sources[j].height(), sources[j].stride_bytes());
-    disjoint(sources[j].data(), se, dst.data(), de);
+    unique[unique_count++] = j;
   }
 
   auto parameters = params_;

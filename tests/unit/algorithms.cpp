@@ -482,8 +482,25 @@ void filter_empty_planes_tests() {
   }
 }
 
+// Reused addresses with different strides are distinct validation domains.
+void repeated_source_validation() {
+  DFTConfig c;c.tbsize=3;c.block=3;c.mode=0;c.opt=1;
+  Plan plan(8,8,{32,true,false},c);
+  std::vector<float> input(80,.25f),output(64);
+  std::array<span2d::Plane<const float>,3> views{{
+    {input.data(),8,8,9*4},{input.data(),8,8,9*4},{input.data(),8,8,10*4}}};
+  auto run=[&]{plan.process({views.data(),views.size()},{output.data(),8,8,8*4});};
+  run();
+  input[77]=NAN; // Visible only through the final, differently strided view.
+  rejects(run);input[77]=.25f;
+  views[2]={input.data(),8,7,9*4};rejects(run);
+  views[2]={output.data(),8,8,8*4};rejects(run);
+  views[2]=views[0];input[0]=NAN;rejects(run);
+}
+
 int main() {
   try {
+    repeated_source_validation();
     windows();
     filters();
     temporal_plan_tests();
