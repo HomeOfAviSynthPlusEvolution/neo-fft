@@ -202,19 +202,31 @@ inline std::shared_ptr<T> get_plan_persistent(size_t length) {
   static std::mutex mut;
   static std::array<std::pair<size_t,std::shared_ptr<T>>,POCKETFFT_CACHE_SIZE> cache{};
   static size_t next=0;
+  // Weak TLS entries skip the shared-cache lock for a thread's active axes
+  // without extending the lifetime of plans evicted from the bounded cache.
+  static thread_local std::array<std::pair<size_t,std::weak_ptr<T>>,4> recent{};
+  static thread_local size_t next_recent=0;
+  for(const auto& entry:recent)
+    if(entry.first==length) if(auto plan=entry.second.lock()) return plan;
+  const auto remember=[&](std::shared_ptr<T> plan) {
+    for(auto& entry:recent) if(entry.first==length) {entry.second=plan;return plan;}
+    recent[next_recent]={length,plan};
+    next_recent=(next_recent+1)%recent.size();
+    return plan;
+  };
   {
     std::lock_guard<std::mutex> lock(mut);
-    for(const auto& entry:cache) if(entry.first==length && entry.second) return entry.second;
+    for(const auto& entry:cache) if(entry.first==length && entry.second) return remember(entry.second);
   }
   SuspendScratchScope suspend;
   auto plan = std::make_shared<T>(length);
   {
     std::lock_guard<std::mutex> lock(mut);
-    for(const auto& entry:cache) if(entry.first==length && entry.second) return entry.second;
+    for(const auto& entry:cache) if(entry.first==length && entry.second) return remember(entry.second);
     cache[next]={length,plan};
     next=(next+1)%cache.size();
   }
-  return plan;
+  return remember(std::move(plan));
 }
 
 template <>
