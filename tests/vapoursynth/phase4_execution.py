@@ -5,11 +5,11 @@ import vapoursynth as vs
 from fixtures import environment,source
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--plugin',type=Path,required=True);args=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--plugin',type=Path,required=True);ap.add_argument('--opt',type=int,default=1);args=ap.parse_args()
     policy=environment(vs);c=vs.core;c.num_threads=1;c.std.LoadPlugin(path=str(args.plugin.resolve()))
     src,_,_=source(vs,dict(format='rgb',bits=8,width=128,height=96,frames=7),41)
     for bt in (-1,0,1,3,5):
-        kw=dict(bt=bt,bw=8,bh=8,l=2,t=2,r=2,b=2,interlaced=True,opt=1)
+        kw=dict(bt=bt,bw=8,bh=8,l=2,t=2,r=2,b=2,interlaced=True,opt=args.opt)
         a=c.neo_fft.FFT3D(src,mt=False,ncpu=1,**kw);b=c.neo_fft.FFT3D(src,mt=True,ncpu=2147483647,**kw)
         for n in (6,0,2,4):
             fa=a.get_frame(n);fb=b.get_frame(n)
@@ -17,7 +17,7 @@ def main():
     for T in (1,3):
         for mode in (0,1):
             for dither in (0,1,4):
-                kw=dict(tbsize=T,sbsize=9 if mode==0 else 8,smode=mode,sosize=4,dither=dither,dither_seed=17,opt=1)
+                kw=dict(tbsize=T,sbsize=9 if mode==0 else 8,smode=mode,sosize=4,dither=dither,dither_seed=17,opt=args.opt)
                 a=c.neo_fft.DFTTest(src,threads=1,fft_threads=1,**kw)
                 b=c.neo_fft.DFTTest(src,threads=3,fft_threads=2147483647,**kw)
                 for n in (6,2,0):

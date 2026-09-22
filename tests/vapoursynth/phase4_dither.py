@@ -34,7 +34,7 @@ def oracle(a,mode,seed,n,p):
     return out
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--plugin',type=Path,required=True);args=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--plugin',type=Path,required=True);ap.add_argument('--opt',type=int,default=1);args=ap.parse_args()
     policy=environment(vs);c=vs.core;c.num_threads=4;c.std.LoadPlugin(path=str(args.plugin.resolve()))
     for coords,h in (((0,0,0,0,0),0x642a1d14),((0,1,0,0,0),0xd32e9dca),((1,0,0,0,0),0xf383f4c5),((17,23,2,5,7),0x9eb639f9),((2147483647,2147483646,2,107,255),0x5064b117)):
         assert hash32(*coords)==h
@@ -50,7 +50,7 @@ def main():
             src=c.std.ModifyFrame(src,clips=src,selector=fill)
             for mode in (1,2,4,2147483647):
                 for seed in (0,17,2147483647):
-                    kw=dict(tbsize=1,sbsize=1,smode=0,swin=7,twin=7,zmean=False,ftype=2,sigma=.375,opt=1,dither=mode,dither_seed=seed)
+                    kw=dict(tbsize=1,sbsize=1,smode=0,swin=7,twin=7,zmean=False,ftype=2,sigma=.375,opt=args.opt,dither=mode,dither_seed=seed)
                     result=c.neo_fft.DFTTest(src,**kw)
                     def check(n):
                         actual=result.get_frame(n); original=src.get_frame(n)
@@ -63,7 +63,7 @@ def main():
                     count+=1
     for fmt in (vs.GRAY16,vs.GRAYS):
         src=c.std.BlankClip(width=17,height=9,format=fmt,color=[.25 if fmt==vs.GRAYS else 10000],length=1)
-        kw=dict(tbsize=1,sbsize=3,smode=0,opt=1)
+        kw=dict(tbsize=1,sbsize=3,smode=0,opt=args.opt)
         a=c.neo_fft.DFTTest(src,dither=2147483647,dither_seed=17,**kw).get_frame(0)
         b=c.neo_fft.DFTTest(src,dither=0,**kw).get_frame(0)
         assert np.asarray(a[0]).tobytes()==np.asarray(b[0]).tobytes()

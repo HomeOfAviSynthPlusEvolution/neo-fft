@@ -97,6 +97,7 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c, std::shared_ptr<r
                                            std::max(1, c.bt),
                                            select_optimal_batch_size(fft.samples(), geometry.x.count)),executor_->workers(),std::move(retention)) {
   valid_format(f);
+  kalman_kernel_=select_kalman(c.opt);copy_row_=select_copy_row(c.opt);dither_noise_=select_dither_noise(c.opt);
   const float factor = f.floating ? 1.0f / 255 : float(1 << (f.bits - 8));
   sampled_ = c.pfactor > 0;
   pfactor_ = c.pfactor;
@@ -176,6 +177,7 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
           c.tbsize,
           select_optimal_batch_size(std::size_t(c.tbsize) * c.block * c.block, geometry.x.count)),executor_->workers(),std::move(retention)) {
   valid_format(f);
+  kalman_kernel_=select_kalman(c.opt);copy_row_=select_copy_row(c.opt);dither_noise_=select_dither_noise(c.opt);
   dither_=c.dither; dither_seed_=c.dither_seed;
   if (c.tbsize > 1) {
     fft3d_ = std::make_unique<RealFFT3D>(c.tbsize, c.block, c.block);
@@ -310,7 +312,7 @@ template<class T> void Plan::advance_kalman(span2d::Plane<const T> source,Kalman
       spatial_.gather_fft3d(ws.padded().row_ptr(by*gy.step+y)+bx*gx.step,wx_.analysis.data(),wy_.analysis[y],ws.block().data()+std::size_t(y)*gx.block,gx.block);
     fft.forward(ws.block().data(),ws.spectrum().data());
     const auto offset=(std::size_t(by)*gx.count+bx)*fft.bins();
-    kalman_scalar(ws.spectrum().data(),state.last.data()+offset,state.covariance.data()+offset,state.process.data()+offset,
+    kalman_kernel_(ws.spectrum().data(),state.last.data()+offset,state.covariance.data()+offset,state.process.data()+offset,
                   pattern,kalman_r0_,kalman_ratio2_,fft.bins());
   }
 }
@@ -537,7 +539,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   } else if constexpr (sizeof(T) == 1) {
     if (algorithm==Algorithm::DFTTest && dither_>0) {
       dither_scalar(checked_subplane(span2d::Plane<const float>(accum),gx.offset,gy.offset,dst.width(),dst.height()),
-                    dst,dither_,dither_seed_,frame,plane);
+                    dst,dither_,dither_seed_,frame,plane,dither_noise_);
       return;
     }
     const float peak = float((1 << format.bits) - 1);

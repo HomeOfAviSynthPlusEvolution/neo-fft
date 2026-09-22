@@ -26,4 +26,7 @@ void kalman_scalar(const std::complex<float>* x, std::complex<float>* last, std:
     last[k]={nr,ni}; covariance[k]={ncr,nci}; process[k]={nqr,nqi};
   }
 }
+#if !NEO_FFT_ENABLE_HIGHWAY
+KalmanKernel select_kalman(int) {return kalman_scalar;}
+#endif
 } // namespace neo_fft

@@ -6,7 +6,7 @@ import vapoursynth as vs
 from fixtures import environment,source
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--plugin',type=Path,required=True);ap.add_argument('--reference',type=Path);args=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--plugin',type=Path,required=True);ap.add_argument('--reference',type=Path);ap.add_argument('--opt',type=int,default=1);args=ap.parse_args()
     policy=environment(vs);c=vs.core;c.num_threads=4;c.std.LoadPlugin(path=str(args.plugin.resolve()))
     if args.reference: c.std.LoadPlugin(path=str(args.reference.resolve()))
     count=0
@@ -15,7 +15,7 @@ def main():
             src,original,_=source(vs,dict(format=family,bits=bits,width=64,height=48,frames=9),37)
             for model in ({},{'sigma2':9},{'pfactor':.7,'pframe':8,'px':2,'py':2}):
                 for fields in (False,True):
-                    kw=dict(bt=0,bw=8,bh=8,ow=4,oh=4,sigma=12,kratio=2,opt=1,l=4,t=4,r=4,b=4,interlaced=fields,**model)
+                    kw=dict(bt=0,bw=8,bh=8,ow=4,oh=4,sigma=12,kratio=2,opt=args.opt,l=4,t=4,r=4,b=4,interlaced=fields,**model)
                     baseline=c.neo_fft.FFT3D(src,**kw)
                     expected=[]
                     for n in range(9):
@@ -40,9 +40,9 @@ def main():
     assert np.all(np.asarray(f[0]).view(np.uint32)==0x7fc12345)
     # Uniform zero is identity; pattern models retain sigma1 initial covariance.
     src,original,_=source(vs,dict(format='gray',bits=8,width=64,height=48,frames=9),19)
-    identity=c.neo_fft.FFT3D(src,bt=0,sigma=0,bw=8,bh=8,opt=1)
+    identity=c.neo_fft.FFT3D(src,bt=0,sigma=0,bw=8,bh=8,opt=args.opt)
     for n in (8,1,0):assert np.asarray(identity.get_frame(n)[0]).tobytes()==original[n][0].tobytes()
-    base=dict(bt=0,bw=8,bh=8,ow=4,oh=4,sigma=12,kratio=2,pframe=8,px=2,py=2,opt=1)
+    base=dict(bt=0,bw=8,bh=8,ow=4,oh=4,sigma=12,kratio=2,pframe=8,px=2,py=2,opt=args.opt)
     sampled=c.neo_fft.FFT3D(src,pfactor=1,**base)
     for strength in (.2,.7,2,1e38):
         other=c.neo_fft.FFT3D(src,pfactor=strength,**base)
@@ -50,7 +50,7 @@ def main():
     if args.reference:
         for model in ({},{'sigma2':9},{'pfactor':.7,'pframe':8,'px':2,'py':2}):
             kw=dict(bt=0,bw=8,bh=8,ow=4,oh=4,sigma=12,kratio=2,**model)
-            own=c.neo_fft.FFT3D(src,opt=1,**kw);ref=c.neo_fft3d.FFT3D(src,opt=0,**kw)
+            own=c.neo_fft.FFT3D(src,opt=args.opt,**kw);ref=c.neo_fft3d.FFT3D(src,opt=0,**kw)
             for n in range(9):
                 a=np.asarray(own.get_frame(n)[0]).copy();b=np.asarray(ref.get_frame(n)[0]).copy()
                 d=np.abs(a.astype(int)-b.astype(int));print('reference',model,n,int(np.count_nonzero(d)),int(d.max()))

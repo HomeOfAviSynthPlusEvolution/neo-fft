@@ -24,17 +24,18 @@ inline ROI make_roi(int width, int height, int sub_w, int sub_h, const FFT3DConf
 template<class T> struct PackedROI {
   std::vector<T> pixels;
   span2d::Plane<T> view;
-  PackedROI(span2d::Plane<const T> source, const ROI& roi)
-      : pixels(mul_size(std::size_t(roi.width),std::size_t(roi.height))) {
+  CopyRow copy;
+  PackedROI(span2d::Plane<const T> source, const ROI& roi,CopyRow copier=copy_row_scalar)
+      : pixels(mul_size(std::size_t(roi.width),std::size_t(roi.height))),copy(copier) {
     checked_subplane(source,roi.left,roi.top,roi.width,roi.height);
     const auto pitch = mul_size(std::size_t(roi.width),sizeof(T));
     view = checked_plane(pixels.data(),roi.width,roi.height,pitch,mul_size(pixels.size(),sizeof(T)));
     for (int y=0;y<roi.height;++y)
-      std::memcpy(view.row_ptr(y),source.row_ptr(roi.top+roi.row(y))+roi.left,pitch);
+      copy(source.row_ptr(roi.top+roi.row(y))+roi.left,view.row_ptr(y),pitch);
   }
   void write(span2d::Plane<T> dst, const ROI& roi) const {
     for (int y=0;y<roi.height;++y)
-      std::memcpy(dst.row_ptr(roi.top+roi.row(y))+roi.left,view.row_ptr(y),std::size_t(roi.width)*sizeof(T));
+      copy(view.row_ptr(y),dst.row_ptr(roi.top+roi.row(y))+roi.left,std::size_t(roi.width)*sizeof(T));
   }
 };
 } // namespace neo_fft::plugin

@@ -5,7 +5,7 @@ import vapoursynth as vs
 from fixtures import environment, source
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument('--plugin',type=Path,required=True); args=ap.parse_args()
+    ap=argparse.ArgumentParser(); ap.add_argument('--plugin',type=Path,required=True); ap.add_argument('--opt',type=int,default=1);args=ap.parse_args()
     policy=environment(vs); c=vs.core; c.num_threads=4
     c.std.LoadPlugin(path=str(args.plugin.resolve()))
     count=0
@@ -24,7 +24,7 @@ def main():
                 packed=c.std.ModifyFrame(cropped,clips=cropped,selector=pack)
                 for bt in (-1,1,2,3,4,5):
                     for model in ({},{'sigma2':5},{'pfactor':1,'px':2,'py':2,'pframe':4},{'sigma2':5,'pshow':True}):
-                        kw=dict(bt=bt,bw=8,bh=8,ow=4,oh=4,opt=1,**model)
+                        kw=dict(bt=bt,bw=8,bh=8,ow=4,oh=4,opt=args.opt,**model)
                         n = (0,2,4)[count % 3]
                         actual=c.neo_fft.FFT3D(src,l=l,t=t,r=r,b=b,interlaced=interlaced,**kw).get_frame(n)
                         expected=c.neo_fft.FFT3D(packed,**kw).get_frame(n)
@@ -40,13 +40,13 @@ def main():
     # Odd absolute top is allowed; only selected chroma requires aligned margins.
     yuv=c.std.BlankClip(width=96,height=80,format=vs.YUV420P8)
     odd,data,_=source(vs,dict(format='420',bits=8,width=96,height=80,frames=1),29)
-    result=c.neo_fft.FFT3D(odd,bt=1,planes=[0],l=1,t=1,r=1,b=1,interlaced=True,bw=8,bh=8,opt=1).get_frame(0)
+    result=c.neo_fft.FFT3D(odd,bt=1,planes=[0],l=1,t=1,r=1,b=1,interlaced=True,bw=8,bh=8,opt=args.opt).get_frame(0)
     gray=c.std.BlankClip(width=94,height=78,format=vs.GRAY8,length=1)
     rows=list(range(0,78,2))+list(range(77,0,-2))
     def odd_pack(n,f):
         out=f.copy(); np.copyto(np.asarray(out[0]),data[0][0][1:-1,1:-1][rows]); return out
     gray=c.std.ModifyFrame(gray,clips=gray,selector=odd_pack)
-    filtered=c.neo_fft.FFT3D(gray,bt=1,bw=8,bh=8,opt=1).get_frame(0)
+    filtered=c.neo_fft.FFT3D(gray,bt=1,bw=8,bh=8,opt=args.opt).get_frame(0)
     expected=data[0][0].copy(); expected[1+np.array(rows),1:-1]=np.asarray(filtered[0])
     assert expected.tobytes()==np.asarray(result[0]).tobytes()
     for p in (1,2): assert data[0][p].tobytes()==np.asarray(result[p]).tobytes()

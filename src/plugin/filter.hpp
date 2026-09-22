@@ -119,11 +119,11 @@ struct Filter {
     std::unique_ptr<runtime::Checkpoint> current;
     int replay_start=0, steps=0;
   };
-  template<class T,class Function> static void with_roi(const ds::PlaneView& view,const ROI& roi,Function&& fn) {
+  template<class T,class Function> static void with_roi(const ds::PlaneView& view,const ROI& roi,CopyRow copy,Function&& fn) {
     auto s=checked_plane(static_cast<const T*>(view.data),view.width,view.height,view.stride_bytes,
                          plane_extent<T>(view.width,view.height,view.stride_bytes));
     if(!roi.interlaced) fn(checked_subplane(s,roi.left,roi.top,roi.width,roi.height));
-    else { PackedROI<T> packed(s,roi);fn(span2d::Plane<const T>(packed.view)); }
+    else { PackedROI<T> packed(s,roi,copy);fn(span2d::Plane<const T>(packed.view)); }
   }
   static void validate_source(const ds::VideoFrameView& frame,const State& state) {
     require(frame.format==state.source.format && frame.plane_count==state.source.format.plane_count,"frame format differs from plan");
@@ -166,9 +166,9 @@ struct Filter {
           const auto compute=[&](auto s) {candidates[p]=state.plans[p]->pattern_candidate(s);};
           const auto& view=source.frame.plane(p);
           switch(state.source.format.sample_format) {
-            case ds::SampleFormat::UInt8: with_roi<std::uint8_t>(view,state.rois[p],compute);break;
-            case ds::SampleFormat::Float32: with_roi<float>(view,state.rois[p],compute);break;
-            default: with_roi<std::uint16_t>(view,state.rois[p],compute);break;
+            case ds::SampleFormat::UInt8: with_roi<std::uint8_t>(view,state.rois[p],state.plans[p]->copy_row(),compute);break;
+            case ds::SampleFormat::Float32: with_roi<float>(view,state.rois[p],state.plans[p]->copy_row(),compute);break;
+            default: with_roi<std::uint16_t>(view,state.rois[p],state.plans[p]->copy_row(),compute);break;
           }
         }
         for(int p=0;p<state.source.format.plane_count;++p) if(candidates[p]) state.plans[p]->publish_pattern(std::move(candidates[p]));
@@ -178,9 +178,9 @@ struct Filter {
           const auto consume=[&](auto s) {state.plans[p]->advance_kalman(s,r.current->planes[p]);};
           const auto& view=source.frame.plane(p);
           switch(state.source.format.sample_format) {
-            case ds::SampleFormat::UInt8: with_roi<std::uint8_t>(view,state.rois[p],consume);break;
-            case ds::SampleFormat::Float32: with_roi<float>(view,state.rois[p],consume);break;
-            default: with_roi<std::uint16_t>(view,state.rois[p],consume);break;
+            case ds::SampleFormat::UInt8: with_roi<std::uint8_t>(view,state.rois[p],state.plans[p]->copy_row(),consume);break;
+            case ds::SampleFormat::Float32: with_roi<float>(view,state.rois[p],state.plans[p]->copy_row(),consume);break;
+            default: with_roi<std::uint16_t>(view,state.rois[p],state.plans[p]->copy_row(),consume);break;
           }
         });
         r.current->frame=r.pending; ++r.steps;
@@ -204,7 +204,7 @@ struct Filter {
     if(!plan || !state) return;
     if(!roi.interlaced) plan->render_kalman(checked_subplane(s,roi.left,roi.top,roi.width,roi.height),checked_subplane(d,roi.left,roi.top,roi.width,roi.height),*state);
     else {
-      PackedROI<T> input(s,roi),output(s,roi);
+      PackedROI<T> input(s,roi,plan->copy_row()),output(s,roi,plan->copy_row());
       plan->render_kalman(span2d::Plane<const T>(input.view),output.view,*state);output.write(d,roi);
     }
   }
@@ -291,10 +291,10 @@ struct Filter {
         }
         std::vector<PackedROI<T>> packed;
         packed.reserve(checked_srcs.size());
-        for (auto source : checked_srcs) packed.emplace_back(source,roi);
+        for (auto source : checked_srcs) packed.emplace_back(source,roi,plan->copy_row());
         std::vector<span2d::Plane<const T>> views;
         for (auto& image : packed) views.push_back(image.view);
-        PackedROI<T> output(original,roi);
+        PackedROI<T> output(original,roi,plan->copy_row());
         plan->process({views.data(),views.size()},output.view);
         output.write(d,roi);
       } else plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},d,frame,plane_index);
@@ -314,7 +314,7 @@ struct Filter {
         src.stride_bytes, plane_extent<T>(src.width, src.height, src.stride_bytes));
     if (!roi.interlaced) plan.prepare_pattern(checked_subplane(s,roi.left,roi.top,roi.width,roi.height));
     else {
-      PackedROI<T> packed(s,roi);
+      PackedROI<T> packed(s,roi,plan.copy_row());
       plan.prepare_pattern(packed.view);
     }
   }

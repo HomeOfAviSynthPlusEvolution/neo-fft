@@ -9,6 +9,7 @@
 #include "kernels/spatial.hpp"
 #include "kernels/model.hpp"
 #include "kernels/kalman.hpp"
+#include "kernels/rows.hpp"
 #include "runtime/executor.hpp"
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
@@ -76,6 +77,7 @@ public:
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
   const runtime::Executor& executor() const {return *executor_;}
+  CopyRow copy_row() const {return copy_row_;}
   bool kalman() const { return kalman_; }
   KalmanState initial_kalman() const;
   template<class T> void advance_kalman(span2d::Plane<const T> source, KalmanState& state) const;
@@ -95,6 +97,9 @@ public:
 
 private:
   std::shared_ptr<runtime::Executor> executor_;
+  KalmanKernel kalman_kernel_ = kalman_scalar;
+  CopyRow copy_row_ = copy_row_scalar;
+  DitherNoise dither_noise_ = dither_noise_scalar;
   bool kalman_ = false;
   float kalman_r0_ = 0, kalman_ratio2_ = 0;
   std::size_t state_bins() const;
