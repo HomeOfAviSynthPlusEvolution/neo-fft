@@ -243,13 +243,6 @@ namespace neo_fft::detail {
 namespace {
 namespace pf = POCKETFFT_NAMESPACE;
 
-inline void ensure_plans(int height, int width) {
-  pf::detail::get_plan<pf::detail::pocketfft_r<float>>(std::size_t(width));
-  pf::detail::get_plan<pf::detail::pocketfft_r<float>>(std::size_t(height));
-  pf::detail::get_plan<pf::detail::pocketfft_c<float>>(std::size_t(width));
-  pf::detail::get_plan<pf::detail::pocketfft_c<float>>(std::size_t(height));
-}
-
 void r2c(int height, int width, const float* in, std::size_t in_row_stride, std::complex<float>* out,
          std::size_t out_row_stride) {
 #if defined(NEO_FFT_HAS_AVX2_CODELET)
@@ -266,7 +259,6 @@ void r2c(int height, int width, const float* in, std::size_t in_row_stride, std:
     return;
   }
 #endif
-  ensure_plans(height, width);
   ScratchScope scope;
   const pf::shape_t shape{std::size_t(height), std::size_t(width)}, axes{0, 1};
   const pf::stride_t rs{std::ptrdiff_t(in_row_stride * sizeof(float)), sizeof(float)};
@@ -290,7 +282,6 @@ void c2r(int height, int width, const std::complex<float>* in, std::size_t in_ro
     return;
   }
 #endif
-  ensure_plans(height, width);
   ScratchScope scope;
   const pf::shape_t shape{std::size_t(height), std::size_t(width)}, axes{0, 1};
   const pf::stride_t rs{std::ptrdiff_t(out_row_stride * sizeof(float)), sizeof(float)};
@@ -321,7 +312,6 @@ void batch_r2c(std::size_t batch, int height, int width, const float* in, std::s
     r2c(height, width, in, in_row_stride, out, out_row_stride);
     return;
   }
-  ensure_plans(height, width);
   ScratchScope scope;
   const pf::shape_t shape{batch, std::size_t(height), std::size_t(width)}, axes{1, 2};
   const pf::stride_t rs{std::ptrdiff_t(in_dist * sizeof(float)), std::ptrdiff_t(in_row_stride * sizeof(float)),
@@ -353,7 +343,6 @@ void batch_c2r(std::size_t batch, int height, int width, const std::complex<floa
     c2r(height, width, in, in_row_stride, out, out_row_stride, fct);
     return;
   }
-  ensure_plans(height, width);
   ScratchScope scope;
   const pf::shape_t shape{batch, std::size_t(height), std::size_t(width)}, axes{1, 2};
   const pf::stride_t rs{std::ptrdiff_t(out_dist * sizeof(float)), std::ptrdiff_t(out_row_stride * sizeof(float)),
@@ -368,14 +357,7 @@ inline std::ptrdiff_t checked_stride(int rows,int columns,std::size_t bytes) {
   require(result<=std::size_t(PTRDIFF_MAX),"FFT stride exceeds ptrdiff_t");
   return static_cast<std::ptrdiff_t>(result);
 }
-inline void ensure_plans_3d(int depth, int height, int width) {
-  ensure_plans(height, width);
-  pf::detail::get_plan<pf::detail::pocketfft_r<float>>(std::size_t(depth));
-  pf::detail::get_plan<pf::detail::pocketfft_c<float>>(std::size_t(depth));
-}
-
 void r2c_3d(int depth, int height, int width, const float* in, std::complex<float>* out) {
-  ensure_plans_3d(depth, height, width);
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{0, 1, 2};
@@ -385,7 +367,6 @@ void r2c_3d(int depth, int height, int width, const float* in, std::complex<floa
 }
 
 void c2r_3d(int depth, int height, int width, const std::complex<float>* in, float* out, float fct) {
-  ensure_plans_3d(depth, height, width);
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{0, 1, 2};
@@ -402,7 +383,6 @@ void batch_r2c_3d(std::size_t batch, int depth, int height, int width, const flo
     r2c_3d(depth, height, width, in, out);
     return;
   }
-  ensure_plans_3d(depth, height, width);
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{batch, std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{1, 2, 3};
@@ -422,7 +402,6 @@ void batch_c2r_3d(std::size_t batch, int depth, int height, int width, const std
     c2r_3d(depth, height, width, in, out, fct);
     return;
   }
-  ensure_plans_3d(depth, height, width);
   ScratchScope scope;
   const int k = width / 2 + 1;
   const pf::shape_t shape{batch, std::size_t(depth), std::size_t(height), std::size_t(width)}, axes{1, 2, 3};
