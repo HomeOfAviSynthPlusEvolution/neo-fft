@@ -3,6 +3,7 @@
 #include "algorithms/profile.hpp"
 #include "algorithms/fft3d_profile.hpp"
 #include <optional>
+#include "runtime/published_model.hpp"
 #include "kernels/spectral.hpp"
 #include "kernels/spatial.hpp"
 #include "runtime/workspace.hpp"
@@ -19,6 +20,9 @@ struct FFT3DConfig {
   float sigma = 2, beta = 1, degrid = 1;
   std::optional<float> sigma2, sigma3, sigma4;
   EnhancementConfig enhancement;
+  float pfactor = 0, pcutoff = .1f;
+  int pframe = 0, px = 0, py = 0;
+  bool pshow = false;
 };
 struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
@@ -56,10 +60,23 @@ public:
   void process(span2d::Span<const span2d::Plane<const float>> sources, span2d::Plane<float> dst,
                runtime::Workspace& ws) const;
 
+  bool preview() const { return preview_; }
+  bool needs_pattern_frame() const { return sampled_ && denoise_; }
+  bool pattern_ready() const { return bool(sampled_model_.get()); }
+  runtime::PublishedModel::Model pattern_power() const { return sampled_model_.get(); }
+  void prepare_pattern(span2d::Plane<const std::uint8_t> source) const;
+  void prepare_pattern(span2d::Plane<const std::uint16_t> source) const;
+  void prepare_pattern(span2d::Plane<const float> source) const;
   runtime::WorkspacePool& workspace_pool() const noexcept { return pool_; }
 
 private:
-  bool denoise_ = true;
+  bool denoise_ = true, sampled_ = false, preview_ = false;
+  int px_ = 0, py_ = 0;
+  float pfactor_ = 0;
+  std::vector<float> sample_weights_;
+  mutable runtime::PublishedModel sampled_model_;
+  template<class T> std::pair<int,int> select_pattern(span2d::Plane<const T> source, runtime::Workspace& ws, std::vector<float>* power) const;
+  template<class T> void build_pattern(span2d::Plane<const T> source) const;
   EnhancementTables enhancement_tables_;
   SpectralParams enhancement_params_;
   void enhance(std::complex<float>* spectrum) const;

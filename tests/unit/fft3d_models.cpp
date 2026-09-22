@@ -1,5 +1,7 @@
 #include "algorithms/plan.hpp"
 #include "../test.hpp"
+#include "../reference/dft.hpp"
+#include <future>
 #include <algorithm>
 
 using namespace neo_fft;
@@ -72,6 +74,52 @@ int main() {
         check_near(output[k].real(), result.real(), 2e-5);
         check_near(output[k].imag(), result.imag(), 2e-5);
       }
+    }
+    // Sampled power: independent direct DFT, rectangular windows, linear pfactor.
+    for (float factor : {.5f, 1.f, 2.f}) {
+      FFT3DConfig sampled; sampled.bw = sampled.bh = 4; sampled.ow = sampled.oh = 0;
+      sampled.pfactor = factor; sampled.px = sampled.py = 1; sampled.degrid = 0; sampled.bt = 5;
+      Plan plan(16, 16, {32,true,false}, sampled);
+      std::vector<float> src(256);
+      for (int y=0;y<16;++y) for(int x=0;x<16;++x) src[y*16+x] = float((x*3+y*7)%11)/8;
+      const auto oracle = direct_dft(src.data(),4,4,16);
+      const span2d::Plane<const float> plane{src.data(),16,16,64};
+      auto one = std::async(std::launch::async,[&] { plan.prepare_pattern(plane); });
+      auto two = std::async(std::launch::async,[&] { plan.prepare_pattern(plane); });
+      one.get(); two.get();
+      auto model = plan.pattern_power(); CHECK(model && model->size()==12);
+      for(int y=0;y<4;++y) for(int x=0;x<3;++x) {
+        const double r = std::pow(double(std::min(y,4-y))/2,2)+std::pow(double(x)/2,2);
+        check_near((*model)[y*3+x], factor*std::norm(oracle[y*3+x])*r/(r+.01), 2e-4);
+      }
+      std::fill(src.begin(),src.end(),0); plan.prepare_pattern(plane);
+      CHECK(plan.pattern_power()==model);
+      CHECK(plan.workspace_pool().active_count()==0);
+    }
+    // Failure discards private state and releases the workspace; retry publishes.
+    {
+      FFT3DConfig sampled; sampled.bw=sampled.bh=4; sampled.ow=sampled.oh=0;
+      sampled.pfactor=1; sampled.px=sampled.py=1;
+      Plan plan(16,16,{32,true,false},sampled);
+      std::vector<float> src(256,0); src[0]=INFINITY;
+      span2d::Plane<const float> view{src.data(),16,16,64};
+      rejects([&]{plan.prepare_pattern(view);}); CHECK(!plan.pattern_ready());
+      CHECK(plan.workspace_pool().active_count()==0);
+      src[0]=0; plan.prepare_pattern(view); CHECK(plan.pattern_ready());
+      sampled.pshow=true;
+      Plan float_preview(16,16,{32,true,false},sampled);
+      std::vector<float> preview_output(256); src[255]=NAN;
+      float_preview.process(view,{preview_output.data(),16,16,64});
+      src[0]=NAN; rejects([&]{float_preview.process(view,{preview_output.data(),16,16,64});});
+      sampled.px=sampled.py=0; sampled.pshow=true;
+      Plan preview(16,16,{8,false,false},sampled);
+      std::vector<std::uint8_t> input(256,128),output(256);
+      preview.process({input.data(),16,16,16},{output.data(),16,16,16});
+      for(int y=0;y<16;++y) for(int x=0;x<16;++x)
+        CHECK(output[y*16+x]==(x>=4 && x<8 && y>=4 && y<8 ? 128 : 0));
+      sampled.bw=sampled.bh=8; sampled.pshow=false;
+      rejects([&]{Plan p(13,13,{8,false,false},sampled);});
+      sampled.bt=-1; Plan inactive_sample(13,13,{8,false,false},sampled);
     }
     FFT3DConfig c; c.bt = -1; c.sigma = 1e30f;
     Plan identity(64, 64, {8, false, false}, c);

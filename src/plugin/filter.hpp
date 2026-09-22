@@ -14,6 +14,8 @@ struct Filter {
     ds::VideoInputInfo source;
     std::array<std::shared_ptr<const Plan>, 3> plans{};
     int temporal_size = 1;
+    int pattern_frame = 0;
+    bool sampled = false;
   };
   static ds::Result<ds::VideoInitStateResult<State>> init(ds::VideoInitContext& ctx) {
     require(ctx.params && ctx.inputs.size() == 1, "missing clip or parameters");
@@ -63,11 +65,18 @@ struct Filter {
           throw std::invalid_argument("plane " + std::to_string(p) + ": " + e.what());
         }
       }
+    if constexpr (A == Algorithm::FFT3D) {
+      state.pattern_frame = std::clamp(config.pframe, 0, info.num_frames-1);
+      for (const auto& plan : state.plans) if (plan) {
+        if (plan->preview()) state.temporal_size = 1;
+        state.sampled = state.sampled || plan->needs_pattern_frame();
+      }
+    }
     return ds::Result<ds::VideoInitStateResult<State>>::success(
         {{info.width, info.height, info.num_frames, f, info.fps}, std::move(state)});
   }
   static ds::VideoRequestPattern request_pattern(int, const State& state) {
-    return state.temporal_size > 1 ? ds::VideoRequestPattern::General : ds::VideoRequestPattern::StrictSpatial;
+    return state.temporal_size > 1 || state.sampled ? ds::VideoRequestPattern::General : ds::VideoRequestPattern::StrictSpatial;
   }
   static ds::Result<ds::VideoRequestResult> request(ds::VideoRequestContext& ctx) {
     const auto& state = ctx.state<State>();
@@ -83,6 +92,7 @@ struct Filter {
     }
 
     if constexpr (A == Algorithm::FFT3D) {
+      if (state.sampled) ctx.request_frame(0, state.pattern_frame);
       const int bt = state.temporal_size;
       const int left = bt / 2;
       const int right = (bt - 1) / 2;
@@ -131,6 +141,11 @@ struct Filter {
         std::memcpy(d.row_ptr(y), s.row_ptr(y), std::size_t(src.width) * sizeof(T));
     }
   }
+  template<class T> static void prepare_pattern(const ds::PlaneView& src, const Plan& plan) {
+    const auto s = checked_plane(static_cast<const T*>(static_cast<const void*>(src.data)), src.width, src.height,
+        src.stride_bytes, plane_extent<T>(src.width, src.height, src.stride_bytes));
+    plan.prepare_pattern(s);
+  }
   static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx) {
     const auto& state = ctx.state<State>();
     const int n = ctx.output_frame;
@@ -176,6 +191,23 @@ struct Filter {
               "frame format differs from plan");
     }
 
+    if constexpr (A == Algorithm::FFT3D) {
+      if (state.sampled) {
+        for (int p = 0; p < state.source.format.plane_count; ++p) {
+          const auto& plan = state.plans[p];
+          if (!plan || plan->pattern_ready()) continue;
+          const auto sample = unwrap(ctx.frames.get(0, state.pattern_frame));
+          require(sample.frame.format == state.source.format && sample.frame.plane_count == state.source.format.plane_count,
+                  "pattern frame format differs from plan");
+          const auto& view = sample.frame.plane(p);
+          switch (state.source.format.sample_format) {
+            case ds::SampleFormat::UInt8: prepare_pattern<std::uint8_t>(view, *plan); break;
+            case ds::SampleFormat::Float32: prepare_pattern<float>(view, *plan); break;
+            default: prepare_pattern<std::uint16_t>(view, *plan); break;
+          }
+        }
+      }
+    }
     for (int p = 0; p < ctx.dst.plane_count; ++p) {
       const auto& d = ctx.dst.plane(p);
       const bool chroma = state.source.format.color_family == ds::ColorFamily::Yuv && p > 0;

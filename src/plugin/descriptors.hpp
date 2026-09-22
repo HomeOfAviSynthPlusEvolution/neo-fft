@@ -150,11 +150,13 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.smax = p.number("smax", 20.0f);
   p.boolean("measure", true);
   p.off("interlaced");
-  for (auto n : {"pframe", "px", "py", "l", "t", "r", "b"})
+  for (auto n : {"l", "t", "r", "b"})
     p.same(n, 0);
-  p.off("pshow");
-  p.same("pcutoff", 0.1f);
-  p.same("pfactor", 0.0f);
+  c.pframe = p.integer("pframe", 0);
+  c.px = p.integer("px", 0); c.py = p.integer("py", 0);
+  c.pshow = p.boolean("pshow", false);
+  c.pcutoff = p.number("pcutoff", .1f);
+  c.pfactor = p.number("pfactor", 0);
   c.sigma2 = p.number("sigma2", c.sigma);
   c.sigma3 = p.number("sigma3", c.sigma);
   c.sigma4 = p.number("sigma4", c.sigma);

@@ -170,6 +170,9 @@ if(NEO_FFT_BUILD_VAPOURSYNTH)
       add_test(NAME vs.curves COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/curves.py" --plugin "$<TARGET_FILE:neo_fft>")
       set_tests_properties(vs.curves PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
+      add_test(NAME vs.fft3d_sampling COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/fft3d_sampling.py" --plugin "$<TARGET_FILE:neo_fft>")
+      set_tests_properties(vs.fft3d_sampling PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
       add_test(NAME harness.protocol COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/differential/test_protocol.py")
       set_tests_properties(harness.protocol PROPERTIES LABELS "spec")
