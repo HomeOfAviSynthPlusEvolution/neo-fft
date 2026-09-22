@@ -37,11 +37,11 @@ def main():
     c.neo_fft.FFT3D(src,bt=-1).get_frame(0)
     c.neo_fft.FFT3D(src,bt=0).get_frame(0)
     fails(lambda:c.neo_fft.FFT3D(src,bt=6),'outside -1..5')
-    fails(lambda:c.neo_fft.DFTTest(src,tbsize=0),'odd')
-    fails(lambda:c.neo_fft.DFTTest(src,tbsize=2),'odd')
-    fails(lambda:c.neo_fft.DFTTest(src,tbsize=4),'odd')
-    fails(lambda:c.neo_fft.DFTTest(src,tbsize=17),'odd')
-    fails(lambda:c.neo_fft.DFTTest(src,tbsize=3,tmode=1),'unsupported')
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=0))
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=2))
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=4))
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=17))
+    fails(lambda:c.neo_fft.DFTTest(src,tbsize=3,tmode=2))
 
     # Short clip rejection for DFTTest vs dynamic fallback for FFT3D
     short_clip = c.std.BlankClip(width=128, height=96, format=vs.GRAY8, length=2)

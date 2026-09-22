@@ -187,9 +187,9 @@ inline DFTConfig dft_config(Params p) {
   c.f0beta = p.number("f0beta", 1);
   c.zmean = p.boolean("zmean", true);
   c.tbsize = p.integer("tbsize", 3);
-  require(c.tbsize >= 1 && c.tbsize <= 15 && c.tbsize % 2 == 1, "DFTTest tbsize must be odd integer in 1..15");
-  p.same("tmode", 0);
-  p.integer("tosize", 0);
+  c.temporal_mode = p.integer("tmode",0);
+  const int temporal_overlap = p.integer("tosize",0);
+  c.temporal_overlap = c.temporal_mode==0 ? 0 : temporal_overlap;
   const auto locations = p.integers("nlocation");
   require(locations.size()%4 == 0 && locations.size()/4 <= 500, "DFTTest nlocation requires up to 500 quadruples");
   for (std::size_t i=0;i<locations.size();i+=4)

@@ -1,5 +1,6 @@
 #pragma once
 #include "algorithms/windows.hpp"
+#include "algorithms/temporal_grid.hpp"
 #include "algorithms/profile.hpp"
 #include "algorithms/dft_noise.hpp"
 #include "algorithms/fft3d_profile.hpp"
@@ -36,6 +37,7 @@ struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
   float sbeta = 2.5f, tbeta = 2.5f, sigma = 8, sigma2 = 8, pmin = 0, pmax = 500, f0beta = 1;
   bool zmean = true;
+  int temporal_mode = 0, temporal_overlap = 0;
   int dither = 0, dither_seed = 0, threads = 1, fft_threads = 1;
   DFTCurves curves;
   std::vector<NoiseLocation> locations;
@@ -72,8 +74,8 @@ public:
                runtime::Workspace& ws) const;
 
   template<class T> void process_at(span2d::Span<const span2d::Plane<const T>> sources,
-                                    span2d::Plane<T> dst,int frame,int plane) const {
-    auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane);
+                                    span2d::Plane<T> dst,int frame,int plane,span2d::Span<const int> targets = {}) const {
+    auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane,nullptr,targets);
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
   const runtime::Executor& executor() const {return *executor_;}
@@ -103,6 +105,7 @@ private:
   bool kalman_ = false;
   float kalman_r0_ = 0, kalman_ratio2_ = 0;
   std::size_t state_bins() const;
+  bool temporal_ola_ = false;
   int dither_ = 0, dither_seed_ = 0;
   std::shared_ptr<const DFTNoise> dft_noise_;
   bool denoise_ = true, sampled_ = false, preview_ = false;
@@ -134,6 +137,6 @@ private:
   float beta_ = 1.0f;
   mutable runtime::WorkspacePool pool_;
   template <class T>
-  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0, const KalmanState* kalman=nullptr) const;
+  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0, const KalmanState* kalman=nullptr,span2d::Span<const int> targets={}) const;
 };
 } // namespace neo_fft

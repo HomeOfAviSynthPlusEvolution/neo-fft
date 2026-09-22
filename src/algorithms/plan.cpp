@@ -70,7 +70,7 @@ void validate(const DFTConfig& c) {
   require(c.block > 0 && (c.mode == 0 || c.mode == 1), "DFTTest invalid sbsize/smode");
   require(c.mode != 0 || c.block % 2 == 1, "DFTTest center mode requires odd sbsize");
   require(c.mode == 0 || (c.overlap >= 0 && c.overlap < c.block), "DFTTest invalid sosize");
-  require(c.tbsize >= 1 && c.tbsize <= 15 && c.tbsize % 2 == 1, "DFTTest tbsize must be odd integer in 1..15");
+  validate_temporal(c.tbsize,c.temporal_mode,c.temporal_overlap);
   if (c.mode == 1 && c.overlap > c.block / 2)
     require(c.block % (c.block - c.overlap) == 0, "DFTTest heavy overlap requires divisible step");
   require(c.swin >= 0 && c.swin <= 11 && c.twin >= 0 && c.twin <= 11, "DFTTest invalid swin/twin");
@@ -178,11 +178,12 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
           select_optimal_batch_size(std::size_t(c.tbsize) * c.block * c.block, geometry.x.count)),executor_->workers(),std::move(retention)) {
   valid_format(f);
   kalman_kernel_=select_kalman(c.opt);copy_row_=select_copy_row(c.opt);dither_noise_=select_dither_noise(c.opt);
+  temporal_ola_=c.temporal_mode==1;
   dither_=c.dither; dither_seed_=c.dither_seed;
   if (c.tbsize > 1) {
     fft3d_ = std::make_unique<RealFFT3D>(c.tbsize, c.block, c.block);
   }
-  auto win = dft_window_3d(c.tbsize, c.block, c.mode == 0 ? 0 : c.overlap, c.mode, c.swin, c.twin, c.sbeta, c.tbeta, c.opt);
+  auto win = dft_window_3d(c.tbsize, c.block, c.mode == 0 ? 0 : c.overlap, c.mode, c.swin, c.twin, c.sbeta, c.tbeta, c.opt,c.temporal_mode,c.temporal_overlap);
   h_ = std::move(win.h);
   h_synthesis_.resize(h_.size());
   const float volume = float(c.tbsize) * float(c.block) * float(c.block);
@@ -326,11 +327,16 @@ void Plan::enhance(std::complex<float>* spectrum) const {
 }
 
 template <class T>
-void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame, int plane, const KalmanState* kalman) const {
+void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame, int plane, const KalmanState* kalman,span2d::Span<const int> targets) const {
   require(!sources.empty(), "sources must not be empty");
   const auto& gx = geometry.x;
   const auto& gy = geometry.y;
-  const int T_slots = int(sources.size());
+  require(sources.size()<=225,"too many temporal slots");
+  const int T_slots = temporal_ola_ ? temporal_size : int(sources.size());
+  if(temporal_ola_) {
+    require(!targets.empty() && targets.size()<=15 && sources.size()==targets.size()*std::size_t(T_slots),"invalid temporal block inputs");
+    for(int z:targets)require(z>=0 && z<T_slots,"invalid target temporal slice");
+  }
   if (algorithm == Algorithm::DFTTest) {
     require(T_slots == temporal_size, "DFTTest sources size must match plan temporal_size");
   } else {
@@ -338,7 +344,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
             "FFT3D sources size must match plan temporal_size or single-frame fallback");
   }
   require(ws.budget().temporal_slots >= T_slots, "workspace temporal slots insufficient");
-  for (int j = 0; j < T_slots; ++j) {
+  for (std::size_t j = 0; j < sources.size(); ++j) {
     const auto& src = sources[j];
     require(src.width() == gx.length && src.height() == gy.length && dst.width() == gx.length &&
                 dst.height() == gy.length,
@@ -354,7 +360,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   }
   const auto de = plane_extent<T>(dst.width(), dst.height(), dst.stride_bytes());
   checked_plane(dst.data(), dst.width(), dst.height(), dst.stride_bytes(), de);
-  for (int j = 0; j < T_slots; ++j) {
+  for (std::size_t j = 0; j < sources.size(); ++j) {
     const auto se = plane_extent<T>(sources[j].width(), sources[j].height(), sources[j].stride_bytes());
     disjoint(sources[j].data(), se, dst.data(), de);
   }
@@ -374,7 +380,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   }
   ws.reset();
   for (int j = 0; j < T_slots; ++j) {
-    if (!preview_ && !kalman) pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
+    if (!preview_ && !kalman && !temporal_ola_) pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
   }
 
   auto accum = ws.accum();
@@ -490,41 +496,47 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   } else { // DFTTest: transforms are independent; overlap-add commits stay Y then X.
     const std::size_t spatial_samples=mul_size(std::size_t(gx.block),std::size_t(gy.block));
     const std::size_t bins=std::size_t(T_slots)*fft.bins();
-    const int center=T_slots/2;
-    const int capacity=ws.budget().batch_size;
-    for(int by=0;by<gy.count;++by) {
-      const int oy=by*gy.step;
-      for(int first=0;first<gx.count;) {
-        const int count=std::min(capacity,gx.count-first);
-        executor_->run(count,[&](int index) {
-          const int ox=(first+index)*gx.step;
-          float* block=ws.block(index).data();
-          for(int z=0;z<T_slots;++z) for(int y=0;y<gy.block;++y) {
-            const auto offset=std::size_t(z)*spatial_samples+std::size_t(y)*gx.block;
-            spatial_.gather_dfttest(ws.padded(z).row_ptr(oy+y)+ox,h_.data()+offset,block+offset,gx.block);
+    const int blocks=temporal_ola_ ? int(targets.size()) : 1;
+    for(int time_block=0;time_block<blocks;++time_block) {
+      if(temporal_ola_)for(int z=0;z<T_slots;++z)pad_source(sources[std::size_t(time_block)*T_slots+z],ws.padded(z),geometry,format,algorithm);
+      const int center=temporal_ola_ ? targets[time_block] : T_slots/2;
+      const int capacity=ws.budget().batch_size;
+      for(int by=0;by<gy.count;++by) {
+        const int oy=by*gy.step;
+        for(int first=0;first<gx.count;) {
+          const int count=std::min(capacity,gx.count-first);
+          executor_->run(count,[&](int index) {
+            const int ox=(first+index)*gx.step;
+            float* block=ws.block(index).data();
+            for(int z=0;z<T_slots;++z) for(int y=0;y<gy.block;++y) {
+              const auto offset=std::size_t(z)*spatial_samples+std::size_t(y)*gx.block;
+              spatial_.gather_dfttest(ws.padded(z).row_ptr(oy+y)+ox,h_.data()+offset,block+offset,gx.block);
+            }
+            auto* spectrum=ws.spectrum(index).data();
+            if(T_slots==1) fft.forward(block,spectrum);else fft3d_->forward(block,spectrum);
+            const float scale=grid_.empty() || (T_slots>1 && (mean_scale_==0 || grid_[0].real()==0))
+                ? 0 : (mean_scale_*spectrum[0].real())/grid_[0].real();
+            kernel_(spectrum,grid_.empty() ? nullptr : grid_.data(),bins,scale,parameters);
+            float* inverse=ws.inverse(index).data();
+            if(T_slots==1) fft.inverse(spectrum,inverse);else fft3d_->inverse(spectrum,inverse);
+            spatial_.validate_finite(inverse,spatial_samples*std::size_t(T_slots));
+          });
+          for(int index=0;index<count;++index) {
+            const int ox=(first+index)*gx.step;
+            float* inverse=ws.inverse(index).data()+std::size_t(center)*spatial_samples;
+            if(temporal_ola_)model_.scale(inverse,nullptr,spatial_samples,float(T_slots)*float(gx.block)*float(gy.block),1);
+            const float* synthesis=(temporal_ola_ ? h_ : h_synthesis_).data()+std::size_t(center)*spatial_samples;
+            if(center_) {
+              const int cy=gy.block/2,cx=gx.block/2;const auto k=std::size_t(cy)*gx.block+cx;
+              if(temporal_ola_)accum.row_ptr(oy+cy)[ox+cx]+=inverse[k]*synthesis[k];
+              else accum.row_ptr(oy+cy)[ox+cx]=inverse[k]*synthesis[k];
+            } else for(int y=0;y<gy.block;++y)
+              spatial_.scatter_dfttest(inverse+std::size_t(y)*gx.block,synthesis+std::size_t(y)*gx.block,accum.row_ptr(oy+y)+ox,gx.block);
           }
-          auto* spectrum=ws.spectrum(index).data();
-          if(T_slots==1) fft.forward(block,spectrum);else fft3d_->forward(block,spectrum);
-          const float scale=grid_.empty() || (T_slots>1 && (mean_scale_==0 || grid_[0].real()==0))
-              ? 0 : (mean_scale_*spectrum[0].real())/grid_[0].real();
-          kernel_(spectrum,grid_.empty() ? nullptr : grid_.data(),bins,scale,parameters);
-          float* inverse=ws.inverse(index).data();
-          if(T_slots==1) fft.inverse(spectrum,inverse);else fft3d_->inverse(spectrum,inverse);
-          spatial_.validate_finite(inverse,spatial_samples*std::size_t(T_slots));
-        });
-        for(int index=0;index<count;++index) {
-          const int ox=(first+index)*gx.step;
-          const float* inverse=ws.inverse(index).data()+std::size_t(center)*spatial_samples;
-          const float* synthesis=h_synthesis_.data()+std::size_t(center)*spatial_samples;
-          if(center_) {
-            const int cy=gy.block/2,cx=gx.block/2;const auto k=std::size_t(cy)*gx.block+cx;
-            accum.row_ptr(oy+cy)[ox+cx]=inverse[k]*synthesis[k];
-          } else for(int y=0;y<gy.block;++y)
-            spatial_.scatter_dfttest(inverse+std::size_t(y)*gx.block,synthesis+std::size_t(y)*gx.block,accum.row_ptr(oy+y)+ox,gx.block);
+          first+=count;
         }
-        first+=count;
       }
-    }
+    } // temporal blocks
   }
 
   for (int y = 0; y < gy.cover; ++y)
@@ -609,7 +621,7 @@ void Plan::process(span2d::Span<const span2d::Plane<const float>> sources, span2
                    runtime::Workspace& ws) const {
   run(sources, dst, ws);
 }
-template void Plan::run<std::uint8_t>(span2d::Span<const span2d::Plane<const std::uint8_t>>,span2d::Plane<std::uint8_t>,runtime::Workspace&,int,int,const KalmanState*) const;
-template void Plan::run<std::uint16_t>(span2d::Span<const span2d::Plane<const std::uint16_t>>,span2d::Plane<std::uint16_t>,runtime::Workspace&,int,int,const KalmanState*) const;
-template void Plan::run<float>(span2d::Span<const span2d::Plane<const float>>,span2d::Plane<float>,runtime::Workspace&,int,int,const KalmanState*) const;
+template void Plan::run<std::uint8_t>(span2d::Span<const span2d::Plane<const std::uint8_t>>,span2d::Plane<std::uint8_t>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>) const;
+template void Plan::run<std::uint16_t>(span2d::Span<const span2d::Plane<const std::uint16_t>>,span2d::Plane<std::uint16_t>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>) const;
+template void Plan::run<float>(span2d::Span<const span2d::Plane<const float>>,span2d::Plane<float>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>) const;
 } // namespace neo_fft

@@ -19,6 +19,7 @@ struct Filter {
     std::array<std::shared_ptr<const Plan>, 3> plans{};
     std::array<ROI, 3> rois{};
     int temporal_size = 1;
+    int temporal_mode = 0, temporal_overlap = 0;
     int pattern_frame = 0;
     bool sampled = false;
     std::shared_ptr<const DFTNoise> dft_noise;
@@ -79,7 +80,7 @@ struct Filter {
     state.executor=std::make_shared<runtime::Executor>(workers);
     state.retention=std::make_shared<runtime::Retention>(workers);
     if constexpr(A==Algorithm::FFT3D) state.requested_fft_workers=config.ncpu;
-    else state.requested_fft_workers=config.fft_threads;
+    else {state.requested_fft_workers=config.fft_threads;state.temporal_mode=config.temporal_mode;state.temporal_overlap=config.temporal_overlap;}
     state.sample_bits = ds::bits_per_sample(f.sample_format);
     for (int p = 0; p < f.plane_count; ++p)
       if (selected[p]) {
@@ -256,6 +257,11 @@ struct Filter {
       if (state.dft_noise) for (const auto& location : state.dft_noise->locations)
         for (int j=0;j<state.temporal_size;++j) ctx.request_frame(0,location.frame+j);
       const int T = state.temporal_size;
+      if(state.temporal_mode==1) {
+        for(const auto& block:temporal_blocks(n,N,T,state.temporal_overlap))
+          for(int z=0;z<T;++z)ctx.request_frame(0,block.slots[z]);
+        return ds::Result<ds::VideoRequestResult>::success({});
+      }
       const int c = T / 2;
       for (int j = 0; j < T; ++j) {
         const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
@@ -266,7 +272,7 @@ struct Filter {
     return ds::Result<ds::VideoRequestResult>::success({});
   }
   template <class T>
-  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi, int frame, int plane_index) {
+  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi, int frame, int plane_index,span2d::Span<const int> targets={}) {
     const auto de = plane_extent<T>(dst.width, dst.height, dst.stride_bytes);
     auto d = checked_plane(static_cast<T*>(static_cast<void*>(dst.data)), dst.width, dst.height, dst.stride_bytes, de);
 
@@ -297,7 +303,7 @@ struct Filter {
         PackedROI<T> output(original,roi,plan->copy_row());
         plan->process({views.data(),views.size()},output.view);
         output.write(d,roi);
-      } else plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},d,frame,plane_index);
+      } else plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},d,frame,plane_index,targets);
     } else {
       const int c = int(src_views.size()) / 2;
       const auto& src = src_views[c];
@@ -338,6 +344,7 @@ struct Filter {
 
     int T = 1;
     std::vector<ds::RequestedVideoFrame> frames_holder;
+    std::vector<int> targets;
 
     if (!has_active_plans) {
       frames_holder.reserve(1);
@@ -356,12 +363,19 @@ struct Filter {
       }
     } else {
       T = state.temporal_size;
+      if(state.temporal_mode==1) {
+        for(const auto& block:temporal_blocks(n,N,T,state.temporal_overlap)) {
+          targets.push_back(block.target);
+          for(int z=0;z<T;++z)frames_holder.push_back(unwrap(ctx.frames.get(0,block.slots[z])));
+        }
+      } else {
       const int c = T / 2;
       frames_holder.reserve(T);
       for (int j = 0; j < T; ++j) {
         const int real = (j >= c) ? ((N - 1 - n < j - c) ? (N - 1) : (n + (j - c)))
                                    : ((n < c - j) ? 0 : (n - (c - j)));
         frames_holder.push_back(unwrap(ctx.frames.get(0, real)));
+      }
       }
     }
 
@@ -418,25 +432,27 @@ struct Filter {
       require(d.width == w && d.height == h, "frame plane dimensions differ from plan");
 
       std::vector<ds::PlaneView> plane_views;
-      plane_views.reserve(T);
-      for (int j = 0; j < T; ++j) {
+      plane_views.reserve(frames_holder.size());
+      for (std::size_t j = 0; j < frames_holder.size(); ++j) {
         const auto& s = frames_holder[j].frame.plane(p);
         require(s.width == w && s.height == h, "frame plane dimensions differ from plan");
         plane_views.push_back(s);
       }
 
+      // The midpoint of concatenated block slots need not be frame n.
+      if(!state.plans[p] && !targets.empty())plane_views={frames_holder[std::size_t(targets[0])].frame.plane(p)};
       switch (state.source.format.sample_format) {
         case ds::SampleFormat::UInt8:
           plane<std::uint8_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                              state.plans[p].get(),state.rois[p],n,p);
+                              state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()});
           break;
         case ds::SampleFormat::Float32:
           plane<float>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                       state.plans[p].get(),state.rois[p],n,p);
+                       state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()});
           break;
         default:
           plane<std::uint16_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                               state.plans[p].get(),state.rois[p],n,p);
+                               state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()});
           break;
       }
     };
