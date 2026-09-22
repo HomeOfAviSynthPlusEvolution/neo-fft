@@ -134,7 +134,7 @@ struct Filter {
     return ds::Result<ds::VideoRequestResult>::success({});
   }
   template <class T>
-  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi) {
+  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi, int frame, int plane_index) {
     const auto de = plane_extent<T>(dst.width, dst.height, dst.stride_bytes);
     auto d = checked_plane(static_cast<T*>(static_cast<void*>(dst.data)), dst.width, dst.height, dst.stride_bytes, de);
 
@@ -165,7 +165,7 @@ struct Filter {
         PackedROI<T> output(original,roi);
         plan->process({views.data(),views.size()},output.view);
         output.write(d,roi);
-      } else plan->process({checked_srcs.data(),checked_srcs.size()},d);
+      } else plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},d,frame,plane_index);
     } else {
       const int c = int(src_views.size()) / 2;
       const auto& src = src_views[c];
@@ -296,15 +296,15 @@ struct Filter {
       switch (state.source.format.sample_format) {
         case ds::SampleFormat::UInt8:
           plane<std::uint8_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                              state.plans[p].get(),state.rois[p]);
+                              state.plans[p].get(),state.rois[p],n,p);
           break;
         case ds::SampleFormat::Float32:
           plane<float>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                       state.plans[p].get(),state.rois[p]);
+                       state.plans[p].get(),state.rois[p],n,p);
           break;
         default:
           plane<std::uint16_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                               state.plans[p].get(),state.rois[p]);
+                               state.plans[p].get(),state.rois[p],n,p);
           break;
       }
     }

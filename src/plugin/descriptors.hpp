@@ -200,8 +200,8 @@ inline DFTConfig dft_config(Params p) {
   c.curves.y = p.numbers("ssy");
   c.curves.time = p.numbers("sst");
   c.curves.system = p.integer("ssystem", 0);
-  p.same("dither", 0);
-  require(p.integer("dither_seed", 0) >= 0, "dither_seed must be nonnegative");
+  c.dither=p.integer("dither",0);
+  c.dither_seed=p.integer("dither_seed",0);
   require(p.integer("threads", 0) <= 1, "unsupported phase-1 threads > 1");
   require(p.integer("fft_threads", 0) <= 1, "unsupported phase-1 fft_threads > 1");
   p.backend();

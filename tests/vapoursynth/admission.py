@@ -58,7 +58,7 @@ def main():
     for kwargs in [dict(sharpen=-.1),dict(sigma2=-1),dict(mt=True),dict(l=-1),dict(kratio=3),
                    dict(wintype=3),dict(beta=0),dict(ncpu=0),dict(ow=17),dict(bw=1)]:
         fails(lambda:c.neo_fft.FFT3D(src,bt=1,**kwargs))
-    for kwargs in [dict(dither=1),dict(threads=2),dict(fft_threads=2),dict(nlocation=[0]),dict(ssx=[1.]),
+    for kwargs in [dict(dither=-1),dict(threads=2),dict(fft_threads=2),dict(nlocation=[0]),dict(ssx=[1.]),
                    dict(ftype=5),dict(f0beta=0),dict(pmin=2,pmax=1),dict(sbsize=8,sosize=5),dict(swin=12),
                    dict(smode=0,sbsize=4),dict(dither_seed=-1),dict(alpha=0)]:
         fails(lambda:c.neo_fft.DFTTest(src,tbsize=1,planes=[],**kwargs))

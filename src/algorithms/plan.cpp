@@ -1,4 +1,5 @@
 #include "kernels/table.hpp"
+#include "kernels/dither.hpp"
 #include "algorithms/plan.hpp"
 #include "algorithms/pad.hpp"
 #include "kernels/spectral.hpp"
@@ -57,6 +58,7 @@ void validate(const FFT3DConfig& c) {
   select_spectral(c.opt);
 }
 void validate(const DFTConfig& c) {
+  require(c.dither>=0 && c.dither_seed>=0,"dither and dither_seed must be nonnegative");
   validate(c.curves);
   require(c.locations.size() <= 500, "DFTTest nlocation exceeds 500 tuples");
   const float alpha = c.alpha.value_or(c.ftype == 0 ? 5.0f : 7.0f);
@@ -160,6 +162,7 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
           c.tbsize,
           select_optimal_batch_size(std::size_t(c.tbsize) * c.block * c.block, geometry.x.count))) {
   valid_format(f);
+  dither_=c.dither; dither_seed_=c.dither_seed;
   if (c.tbsize > 1) {
     fft3d_ = std::make_unique<RealFFT3D>(c.tbsize, c.block, c.block);
   }
@@ -266,7 +269,7 @@ void Plan::enhance(std::complex<float>* spectrum) const {
 }
 
 template <class T>
-void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws) const {
+void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame, int plane) const {
   require(!sources.empty(), "sources must not be empty");
   const auto& gx = geometry.x;
   const auto& gy = geometry.y;
@@ -523,6 +526,11 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
       spatial_.store_output_float(a_ptr, dst_row, dst.width(), algorithm == Algorithm::FFT3D, scale);
     }
   } else if constexpr (sizeof(T) == 1) {
+    if (algorithm==Algorithm::DFTTest && dither_>0) {
+      dither_scalar(checked_subplane(span2d::Plane<const float>(accum),gx.offset,gy.offset,dst.width(),dst.height()),
+                    dst,dither_,dither_seed_,frame,plane);
+      return;
+    }
     const float peak = float((1 << format.bits) - 1);
     const float scale = float(1 << (format.bits - 8));
     for (int y = 0; y < dst.height(); ++y) {
@@ -590,4 +598,7 @@ void Plan::process(span2d::Span<const span2d::Plane<const float>> sources, span2
                    runtime::Workspace& ws) const {
   run(sources, dst, ws);
 }
+template void Plan::run<std::uint8_t>(span2d::Span<const span2d::Plane<const std::uint8_t>>,span2d::Plane<std::uint8_t>,runtime::Workspace&,int,int) const;
+template void Plan::run<std::uint16_t>(span2d::Span<const span2d::Plane<const std::uint16_t>>,span2d::Plane<std::uint16_t>,runtime::Workspace&,int,int) const;
+template void Plan::run<float>(span2d::Span<const span2d::Plane<const float>>,span2d::Plane<float>,runtime::Workspace&,int,int) const;
 } // namespace neo_fft
