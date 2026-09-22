@@ -7,6 +7,16 @@
 using namespace neo_fft;
 int main() {
   try {
+    // Manual left-edge sample includes reflection followed by a contiguous run.
+    // Keep the integer offset calculation separate from source pointer addition.
+    {
+      FFT3DConfig c;c.bw=c.bh=8;c.ow=c.oh=4;c.pfactor=1;c.px=0;c.py=1;
+      std::vector<float> input(256);for(int i=0;i<256;++i)input[i]=float(i%19)/19;
+      Plan native(16,16,{32,true,false},c);c.opt=1;Plan scalar(16,16,{32,true,false},c);
+      const span2d::Plane<const float> view{input.data(),16,16,64};
+      native.prepare_pattern(view);scalar.prepare_pattern(view);
+      CHECK(*native.pattern_power()==*scalar.pattern_power());
+    }
     for (int W : {5, 8, 10}) for (int H : {5, 8, 9}) {
       const std::array<float, 4> sigma{2, 4, 6, 8};
       const auto p = fft3d_profile(W, H, sigma);

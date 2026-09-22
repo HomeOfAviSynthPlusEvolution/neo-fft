@@ -4,7 +4,7 @@
 namespace neo_fft {
 DFTNoise::DFTNoise(const DFTConfig& c)
     : locations(c.locations), temporal_size(c.tbsize), block_size(c.block),
-      fft_(c.tbsize,c.block,c.block), zmean_(c.zmean) {
+      fft_(c.tbsize,c.block,c.block), kernels_(select_model(c.opt)), zmean_(c.zmean) {
   validate(c);
   // Window/input plus grid/spectrum and private/published real power tables.
   working_set_bytes_ = add_size(mul_size(fft_.samples(),2*sizeof(float)),
@@ -16,7 +16,7 @@ DFTNoise::DFTNoise(const DFTConfig& c)
   calibration_ = finite(finite((1.0f / float(locations.size())) * finite(sample.wscale/output.wscale)) * c.alpha.value_or(c.ftype == 0 ? 5.0f : 7.0f));
   window_ = std::move(sample.h);
   auto input = window_;
-  for (float& v : input) v = finite(255.0f*v);
+  kernels_.scale(input.data(),nullptr,input.size(),255,1);
   grid_ = buffer<std::complex<float>>(fft_.bins());
   fft_.forward(input.data(),grid_.data());
   for (auto v : grid_) { finite(v.real()); finite(v.imag()); }
@@ -31,16 +31,12 @@ void DFTNoise::prepare(const Gather& gather) const {
   for (const auto& location : locations) {
     for (int z=0;z<temporal_size;++z)
       gather(location,z,{input.data()+std::size_t(z)*slice,slice});
-    for (std::size_t k=0;k<input.size();++k) input[k]=finite(finite(input[k])*window_[k]);
+    kernels_.window(input.data(),window_.data(),input.size(),1);
     fft_.forward(input.data(),spectrum.data());
     const float ratio=zmean_ ? finite(spectrum[0].real()/grid_[0].real()) : 0;
-    for (std::size_t k=0;k<sum.size();++k) {
-      const float re=finite(spectrum[k].real()-(zmean_ ? finite(ratio*grid_[k].real()) : 0));
-      const float im=finite(spectrum[k].imag()-(zmean_ ? finite(ratio*grid_[k].imag()) : 0));
-      sum[k]=finite(sum[k]+finite(finite(re*re)+finite(im*im)));
-    }
+    kernels_.power(spectrum.data(),zmean_ ? grid_.data() : nullptr,ratio,sum.data(),sum.size(),true);
   }
-  for (float& v : sum) v=finite(v*calibration_);
+  kernels_.scale(sum.data(),nullptr,sum.size(),calibration_,1);
   model_.publish(std::move(sum));
 }
 } // namespace neo_fft

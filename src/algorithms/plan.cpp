@@ -84,7 +84,7 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
       denoise_(c.bt != -1),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
       kernel_(select_spectral(c.opt)), temporal_kernel_(select_fft3d_temporal(c.opt)),
-      spatial_(select_spatial(c.opt)), mean_scale_(c.degrid),
+      spatial_(select_spatial(c.opt)), model_(select_model(c.opt)), mean_scale_(c.degrid),
       pool_(runtime::make_workspace_budget(geometry, fft.samples(),
                                            fft.bins() * std::size_t(std::max(1, c.bt) + 1), true,
                                            std::max(1, c.bt),
@@ -146,7 +146,7 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c)
 }
 Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<const DFTNoise> noise)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), temporal_size(c.tbsize),
-      fft(c.block, c.block), kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)),
+      fft(c.block, c.block), kernel_(select_spectral(c.opt)), spatial_(select_spatial(c.opt)), model_(select_model(c.opt)),
       mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
       pool_(runtime::make_workspace_budget(
           geometry,
@@ -198,6 +198,21 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
     require(grid_[0].real() != 0, "DFTTest zmean requires nonzero template DC");
   }
 }
+template<class T> void Plan::gather_pattern(span2d::Plane<const T> source,float* block,int ox,int oy,bool window) const {
+  const auto& gx=geometry.x;const auto& gy=geometry.y;
+  const float base=!format.floating && format.chroma ? float(1 << (format.bits-1)) : 0;
+  const auto start=std::int64_t(ox)-gx.offset;
+  const int left=int(std::clamp(-start,std::int64_t(0),std::int64_t(gx.block)));
+  const int right=int(std::clamp(std::int64_t(gx.length)-start,std::int64_t(0),std::int64_t(gx.block)));
+  for(int y=0;y<gy.block;++y) {
+    const auto* src=source.row_ptr(reflect(oy+y,gy));
+    float* dst=block+std::size_t(y)*gx.block;
+    for(int x=0;x<left;++x) dst[x]=finite(finite(float(src[reflect(ox+x,gx)]))-base);
+    if(right>left) model_.decode(src+(start+left),sample_storage<T>,dst+left,std::size_t(right-left),base,1);
+    for(int x=std::max(left,right);x<gx.block;++x) dst[x]=finite(finite(float(src[reflect(ox+x,gx)]))-base);
+    if(window) model_.window(dst,wx_.analysis.data(),std::size_t(gx.block),wy_.analysis[y]);
+  }
+}
 template<class T>
 std::pair<int,int> Plan::select_pattern(span2d::Plane<const T> source, runtime::Workspace& ws, std::vector<float>* power) const {
   require(source.width() == geometry.x.length && source.height() == geometry.y.length, "pattern plane dimensions differ from plan");
@@ -210,25 +225,15 @@ std::pair<int,int> Plan::select_pattern(span2d::Plane<const T> source, runtime::
   float best = 0;
   bool found = false;
   std::pair<int,int> selected{};
-  const float base = !format.floating && format.chroma ? float(1 << (format.bits-1)) : 0;
   for (int by = top; by <= bottom; ++by) for (int bx = left; bx <= right; ++bx) {
-    for (int y = 0; y < geometry.y.block; ++y) for (int x = 0; x < geometry.x.block; ++x) {
-      const int sy = reflect(by*geometry.y.step+y, geometry.y), sx = reflect(bx*geometry.x.step+x, geometry.x);
-      const float value = finite(finite(float(source.row_ptr(sy)[sx])) - base);
-      ws.block()[std::size_t(y)*geometry.x.block+x] = finite(finite(value*wy_.analysis[y])*wx_.analysis[x]);
-    }
+    gather_pattern(source,ws.block().data(),bx*geometry.x.step,by*geometry.y.step,true);
     auto* spectrum = ws.spectrum().data();
     fft.forward(ws.block().data(), spectrum);
     const float g = grid_.empty() ? 0 : finite(finite(mean_scale_*spectrum[0].real())/grid_[0].real());
-    float score = 0;
-    for (std::size_t k = 0; k < fft.bins(); ++k) {
-      const float re = finite(spectrum[k].real() - (grid_.empty() ? 0 : finite(g*grid_[k].real())));
-      const float im = finite(spectrum[k].imag() - (grid_.empty() ? 0 : finite(g*grid_[k].imag())));
-      const float q = finite(finite(re*re) + finite(im*im));
-      // Request-private inverse storage is available for temporary unscaled powers.
-      ws.inverse()[k] = q;
-      score = finite(score + finite(q * sample_weights_[k]));
-    }
+    // Request-private inverse storage holds unscaled powers; scoring keeps the
+    // original left-to-right addition order, including first-minimum ties.
+    model_.power(spectrum,grid_.empty() ? nullptr : grid_.data(),g,ws.inverse().data(),fft.bins(),false);
+    const float score=model_.score(ws.inverse().data(),sample_weights_.data(),fft.bins());
     if (!found || score < best) {
       found = true; best = score; selected = {bx,by};
       if (power) for (std::size_t k = 0; k < fft.bins(); ++k) (*power)[k] = ws.inverse()[k];
@@ -243,10 +248,7 @@ template<class T> void Plan::build_pattern(span2d::Plane<const T> source) const 
   auto lease = pool_.acquire();
   auto power = buffer<float>(fft.bins());
   select_pattern(source, *lease, &power);
-  for (std::size_t k = 0; k < power.size(); ++k) {
-    power[k] = finite(finite(pfactor_*power[k])*sample_weights_[k]);
-    finite(float(temporal_size)*power[k]);
-  }
+  model_.scale(power.data(),sample_weights_.data(),power.size(),pfactor_,float(temporal_size));
   sampled_model_.publish(std::move(power));
 }
 void Plan::prepare_pattern(span2d::Plane<const std::uint8_t> source) const { build_pattern(source); }
@@ -319,9 +321,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   if (algorithm == Algorithm::FFT3D && preview_) {
     const auto selected = select_pattern(sources[0], ws, nullptr);
     const int ox = selected.first * gx.step, oy = selected.second * gy.step;
-    for (int y = 0; y < gy.block; ++y)
-      for (int x = 0; x < gx.block; ++x)
-        ws.block()[std::size_t(y)*gx.block+x] = finite(finite(float(sources[0].row_ptr(reflect(oy+y,gy))[reflect(ox+x,gx)]))-base);
+    gather_pattern(sources[0],ws.block().data(),ox,oy,false);
     fft.forward(ws.block().data(), ws.spectrum().data());
     fft.inverse(ws.spectrum().data(), ws.inverse().data());
     spatial_.validate_finite(ws.inverse().data(), ws.inverse().size());

@@ -159,15 +159,13 @@ struct Filter {
     plan.prepare_pattern(s);
   }
   template<class T> static void gather_noise(const ds::PlaneView& view, const NoiseLocation& location,
-                                            int S, int bits, span2d::Span<float> out) {
+                                            int S, int bits, span2d::Span<float> out, const ModelKernels& kernels) {
     const auto source = checked_plane(static_cast<const T*>(static_cast<const void*>(view.data)),view.width,view.height,
         view.stride_bytes,plane_extent<T>(view.width,view.height,view.stride_bytes));
     require(location.x <= view.width-S && location.y <= view.height-S, "sample frame rectangle differs from plan");
-    for (int y=0;y<S;++y) for (int x=0;x<S;++x) {
-      const float v=finite(float(source.row_ptr(location.y+y)[location.x+x]));
-      if constexpr (std::is_same_v<T,float>) out[std::size_t(y)*S+x]=finite(v*255.0f);
-      else out[std::size_t(y)*S+x]=v/float(1 << (bits-8));
-    }
+    const float scale=std::is_same_v<T,float> ? 255.0f : 1.0f/float(1 << (bits-8));
+    for(int y=0;y<S;++y)
+      kernels.decode(source.row_ptr(location.y+y)+location.x,sample_storage<T>,out.data()+std::size_t(y)*S,std::size_t(S),0,scale);
   }
   static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx) {
     const auto& state = ctx.state<State>();
@@ -242,9 +240,9 @@ struct Filter {
                 view.height==(state.source.height >> (chroma ? state.source.format.subsampling_h : 0)), "sample plane dimensions differ from plan");
         const int S=state.dft_noise->block_size, bits=state.sample_bits;
         switch (state.source.format.sample_format) {
-          case ds::SampleFormat::UInt8: gather_noise<std::uint8_t>(view,location,S,bits,out); break;
-          case ds::SampleFormat::Float32: gather_noise<float>(view,location,S,bits,out); break;
-          default: gather_noise<std::uint16_t>(view,location,S,bits,out); break;
+          case ds::SampleFormat::UInt8: gather_noise<std::uint8_t>(view,location,S,bits,out,state.dft_noise->kernels()); break;
+          case ds::SampleFormat::Float32: gather_noise<float>(view,location,S,bits,out,state.dft_noise->kernels()); break;
+          default: gather_noise<std::uint16_t>(view,location,S,bits,out,state.dft_noise->kernels()); break;
         }
       });
     }

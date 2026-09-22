@@ -7,6 +7,7 @@
 #include "runtime/published_model.hpp"
 #include "kernels/spectral.hpp"
 #include "kernels/spatial.hpp"
+#include "kernels/model.hpp"
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
 
@@ -95,6 +96,8 @@ private:
   SpectralKernel kernel_;
   Fft3dTemporalKernel temporal_kernel_ = nullptr;
   SpatialKernels spatial_;
+  ModelKernels model_;
+  template<class T> void gather_pattern(span2d::Plane<const T>,float*,int,int,bool) const;
   float mean_scale_ = 0;
   bool center_ = false;
   float sigma_eff_ = 0.0f;
