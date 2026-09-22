@@ -1,9 +1,13 @@
 #include "kernels/model.hpp"
 #include "kernels/table.hpp"
+#include "kernels/spatial.hpp"
 #include "algorithms/windows.hpp"
 #include "base/checked.hpp"
 #include "../test.hpp"
 #include <cstring>
+#ifdef NEO_FFT_TEST_HIGHWAY
+#include <hwy/targets.h>
+#endif
 #if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -36,14 +40,20 @@ template<class T> struct Guard {
 };
 template<class T> void check_decode(std::size_t n,const ModelKernels& native) {
   Guard<T> src(n);Guard<float> a(n),b(n);
-  for(std::size_t i=0;i<n;++i) src.data[i]=T(i%251);
+  for(std::size_t i=0;i<n;++i) {
+    if constexpr(std::is_same_v<T,float>) {
+      const float values[]={-.5f,-0.f,0.f,1e-30f,123.5f};src.data[i]=values[i%5];
+    } else {
+      const unsigned values[]={65535,32768,32767,255,256,0};src.data[i]=T(values[i%6]);
+    }
+  }
   for(float base:{0.f,128.f}) for(float scale:{1.f,255.f,1.f/256}) {
     native.decode(src.data,sample_storage<T>,a.data,n,base,scale);
     model_scalar().decode(src.data,sample_storage<T>,b.data,n,base,scale);
     CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
   }
 }
-int main() {try {
+void run_tests() {
   const auto native=select_model(0);const auto scalar=model_scalar();
   const auto tables=select_table(0),reference=table_scalar();
   // Independent input frequencies exercise all segments and exact knots, with
@@ -128,6 +138,11 @@ int main() {try {
       native.scale(a.data,nullptr,n,2,1);scalar.scale(b.data,nullptr,n,2,1);
       CHECK(std::memcmp(a.data,b.data,n*sizeof(float))==0);
     }
+    // Adding one to 2^24 rounds back to 2^24. A separately reduced narrow tail
+    // would change the answer once enough ones had been grouped together.
+    std::fill_n(a.data,n,1.f);a.data[0]=16777216.f;std::fill_n(weights.data,n,1.f);
+    CHECK(native.score(a.data,weights.data,n)==16777216.f);
+    CHECK(native.score(a.data,weights.data,n)==scalar.score(a.data,weights.data,n));
     for(auto k:{native,scalar}) for(std::size_t bad=0;bad<n;++bad) {
       std::fill_n(a.data,n,1.f);a.data[bad]=INFINITY;
       rejects([&]{k.window(a.data,weights.data,n,0);});
@@ -140,4 +155,20 @@ int main() {try {
     }
   }
   std::cout<<"model kernels: exact scalar agreement, guard tails and non-finite checks passed\n";
+}
+int main() {try {
+#ifdef NEO_FFT_TEST_HIGHWAY
+  // Exercise only CPU-supported targets that were compiled into the core.
+  // SetSupportedTargetsForTest also invalidates Highway's dispatch cache.
+  const auto targets=hwy::SupportedAndGeneratedTargets();CHECK(!targets.empty());
+  for(const auto target:targets) {
+    hwy::SetSupportedTargetsForTest(target);
+    CHECK(std::string(spatial_target(0))==hwy::TargetName(target));
+    std::cout<<hwy::TargetName(target)<<": "<<std::flush;
+    run_tests();
+  }
+  hwy::SetSupportedTargetsForTest(0);
+#else
+  run_tests();
+#endif
 } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;} }
