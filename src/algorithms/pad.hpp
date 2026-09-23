@@ -11,17 +11,16 @@ inline int reflect(int j, int L) noexcept {
   return j;
 }
 
-// Admitted FFT3D geometry contains the full source and uses one reflection.
+// Admitted geometry contains the full source and uses one reflection.
 // Decode and validate each source sample once, then copy the reflected borders.
 template <class T>
-void pad_fft3d_source(span2d::Plane<const T> src, span2d::Plane<float> padded,
-                      const Geometry& geom, SampleFormat format, const ModelKernels& model) {
-  const float base = !format.floating && format.chroma ? float(1 << (format.bits - 1)) : 0.0f;
+void pad_decoded_source(span2d::Plane<const T> src, span2d::Plane<float> padded,
+                        const Geometry& geom, float base, float scale, const ModelKernels& model) {
   const int width = src.width(), height = src.height();
   const int dx = geom.x.offset, dy = geom.y.offset;
   for (int y = 0; y < height; ++y) {
     float* row = padded.row_ptr(dy + y);
-    model.decode(src.row_ptr(y), sample_storage<T>, row + dx, std::size_t(width), base, 1.0f);
+    model.decode(src.row_ptr(y), sample_storage<T>, row + dx, std::size_t(width), base, scale);
     for (int x = 0; x < dx; ++x) row[x] = row[dx + reflect(x - dx, width)];
     for (int x = dx + width; x < geom.x.cover; ++x) row[x] = row[dx + reflect(x - dx, width)];
   }
@@ -29,6 +28,20 @@ void pad_fft3d_source(span2d::Plane<const T> src, span2d::Plane<float> padded,
     std::copy_n(padded.row_ptr(dy + reflect(y - dy, height)), geom.x.cover, padded.row_ptr(y));
   for (int y = dy + height; y < geom.y.cover; ++y)
     std::copy_n(padded.row_ptr(dy + reflect(y - dy, height)), geom.x.cover, padded.row_ptr(y));
+}
+
+template <class T>
+void pad_fft3d_source(span2d::Plane<const T> src, span2d::Plane<float> padded,
+                      const Geometry& geom, SampleFormat format, const ModelKernels& model) {
+  const float base = !format.floating && format.chroma ? float(1 << (format.bits - 1)) : 0.0f;
+  pad_decoded_source(src,padded,geom,base,1.0f,model);
+}
+
+template <class T>
+void pad_dfttest_source(span2d::Plane<const T> src, span2d::Plane<float> padded,
+                       const Geometry& geom, SampleFormat format, const ModelKernels& model) {
+  const float scale=format.floating ? 255.0f : 1.0f/float(1 << (format.bits-8));
+  pad_decoded_source(src,padded,geom,0.0f,scale,model);
 }
 
 template <class T>

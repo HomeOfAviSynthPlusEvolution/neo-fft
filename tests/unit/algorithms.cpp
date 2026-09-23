@@ -535,8 +535,46 @@ template<class T> void fft3d_padding(SampleFormat format) {
   }
 }
 
+template<class T> void dfttest_padding(SampleFormat format) {
+  for(int opt:{0,1})for(int block:{1,9,12,16})for(int mode:{0,1})for(bool reverse:{false,true}) {
+    if(mode==0 && block%2==0)continue;
+    const int overlap=mode==0 ? 0 : block-block/(block==9 ? 3 : 4);
+    if(overlap==block)continue;
+    const int width=block*3+1,height=block*3+3,stride=width+7;
+    const Geometry geometry{dft_axis(width,block,mode,overlap),dft_axis(height,block,mode,overlap)};
+    std::vector<T> input(stride*height,T(7));
+    for(int y=0;y<height;++y)for(int x=0;x<width;++x)input[y*stride+x]=T((y*71+x*19)%251);
+    if constexpr(std::is_same_v<T,float>) {
+      input[0]=-0.0f;input[1]=std::numeric_limits<float>::denorm_min();input[stride+3]=-.3125f;
+      for(int y=0;y<height;++y)input[y*stride+width]=NAN; // Padding must remain unread.
+    }
+    const span2d::Plane<const T> source{input.data()+(reverse ? stride*(height-1) : 0),width,height,
+        (reverse ? -1 : 1)*stride*std::ptrdiff_t(sizeof(T))};
+    const int pitch=geometry.x.cover+5;
+    std::vector<float> expected(pitch*geometry.y.cover,-99),actual(expected);
+    const span2d::Plane<float> old_pad{expected.data(),geometry.x.cover,geometry.y.cover,pitch*4};
+    const span2d::Plane<float> new_pad{actual.data(),geometry.x.cover,geometry.y.cover,pitch*4};
+    pad_source(source,old_pad,geometry,format,Algorithm::DFTTest);
+    const auto model=select_model(opt);pad_dfttest_source(source,new_pad,geometry,format,model);
+    CHECK(std::memcmp(expected.data(),actual.data(),expected.size()*sizeof(float))==0);
+    if constexpr(std::is_same_v<T,float>) {
+      for(int pos:{0,width-1,(height-1)*stride,(height-1)*stride+width-1,stride+3}) {
+        const float saved=input[pos];
+        for(float bad:{NAN,INFINITY,-INFINITY,std::numeric_limits<float>::max()}) {
+          input[pos]=bad;rejects([&]{pad_dfttest_source(source,new_pad,geometry,format,model);});
+        }
+        input[pos]=saved;
+      }
+    }
+  }
+}
+
 int main() {
   try {
+    dfttest_padding<std::uint8_t>({8,false,false});
+    dfttest_padding<std::uint16_t>({10,false,true});
+    dfttest_padding<std::uint16_t>({16,false,false});
+    dfttest_padding<float>({32,true,true});
     fft3d_padding<std::uint8_t>({8, false, true});
     fft3d_padding<std::uint16_t>({10, false, true});
     fft3d_padding<std::uint16_t>({16, false, true});

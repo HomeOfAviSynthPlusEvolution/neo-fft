@@ -371,10 +371,6 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     const auto se = plane_extent<T>(src.width(), src.height(), src.stride_bytes());
     checked_plane(src.data(), src.width(), src.height(), src.stride_bytes(), se);
     disjoint(src.data(), se, dst.data(), de);
-    if constexpr (std::is_same_v<T, float>) {
-      for (int y = 0; algorithm == Algorithm::DFTTest && !preview_ && !kalman && y < src.height(); ++y)
-        spatial_.validate_finite(src.row_ptr(y), std::size_t(src.width()));
-    }
     unique[slot] = j+1;
   }
 
@@ -403,7 +399,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     }
   };
   if(algorithm==Algorithm::DFTTest && !temporal_ola_)
-    for(int j=0;j<T_slots;++j)pad_source(sources[j],ws.padded(j),geometry,format,algorithm);
+    for(int j=0;j<T_slots;++j)pad_dfttest_source(sources[j],ws.padded(j),geometry,format,model_);
 
   auto accum = ws.accum();
   auto row = algorithm == Algorithm::FFT3D ? ws.row() : span2d::Plane<float>{};
@@ -544,7 +540,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     const std::size_t bins=std::size_t(T_slots)*fft.bins();
     const int blocks=temporal_ola_ ? int(targets.size()) : 1;
     for(int time_block=0;time_block<blocks;++time_block) {
-      if(temporal_ola_)for(int z=0;z<T_slots;++z)pad_source(sources[std::size_t(time_block)*T_slots+z],ws.padded(z),geometry,format,algorithm);
+      if(temporal_ola_)for(int z=0;z<T_slots;++z)pad_dfttest_source(sources[std::size_t(time_block)*T_slots+z],ws.padded(z),geometry,format,model_);
       const int center=temporal_ola_ ? targets[time_block] : T_slots/2;
       const int capacity=ws.budget().batch_size;
       for(int by=0;by<gy.count;++by) {
