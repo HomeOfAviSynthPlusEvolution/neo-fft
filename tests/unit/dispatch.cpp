@@ -98,7 +98,7 @@ int main() {
     const auto optimized = select_spectral(0);
     optimized(nullptr, nullptr, 0, 0, {});
     for (int type = -1; type <= 4; ++type)
-      for (float exponent : {.5f, 1.0f, 2.0f, .50005f})
+      for (float exponent : {.5f, 1.0f, 2.0f, .50005f, .99994f, .99996f, 1.00004f, 1.00006f})
         for (std::size_t count : {1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 257})
           for (bool mean : {false, true})
           for (bool table : {false, true}) {
@@ -127,6 +127,35 @@ int main() {
               check_near(samples.data[i].imag(), expected[i].imag(), 2e-6);
             }
           }
+    // Linear-Wiener specializations must reject non-finite input/power in the
+    // first/second unrolled vector and scalar tail, with either PSD/mean mode.
+    for(int opt:{0,1})for(bool mean:{false,true})for(bool table:{false,true})
+      for(std::size_t count:{1,7,8,9,15,16,17,31,32,33,63,64,65}) {
+        Guarded samples(count), grid(count), primary_storage(count);
+        auto* primary=reinterpret_cast<float*>(primary_storage.data)+count;
+        std::fill_n(primary,count,1.0f);
+        std::fill_n(grid.data,count,std::complex<float>{.25f,.5f});
+        SpectralParams p;p.type=0;p.a=1;
+        if(table) {p.primary_mode=PrimaryMode::Table;p.primary={primary,count};}
+        for(std::size_t at:{std::size_t(0),count/2,count-1})for(float bad:{NAN,INFINITY,1e20f}) {
+          std::fill_n(samples.data,count,std::complex<float>{2,3});
+          samples.data[at]={bad,1};
+          rejects([&]{select_spectral(opt)(samples.data,mean ? grid.data : nullptr,count,.5f,p);});
+        }
+      }
+    // A linear Wiener request with enhancement must retain the generic branch.
+    {
+      std::vector<std::complex<float>> actual(65,{2,3}), expected=actual, grid(65,{.25f,.5f});
+      std::vector<float> window(65,.5f);
+      SpectralParams p;p.type=0;p.a=1;
+      p.enhancement={.4f,.2f,16,400,2500,{window.data(),window.size()},{window.data(),window.size()}};
+      spectral_scalar(expected.data(),grid.data(),actual.size(),.5f,p);
+      optimized(actual.data(),grid.data(),actual.size(),.5f,p);
+      for(std::size_t i=0;i<actual.size();++i) {
+        check_near(actual[i].real(),expected[i].real(),2e-6);
+        check_near(actual[i].imag(),expected[i].imag(),2e-6);
+      }
+    }
     // 1. Pure SIMD (exact vector length, count = 32): verify SIMD detection without scalar tail
     {
       SpectralParams overflow_params;

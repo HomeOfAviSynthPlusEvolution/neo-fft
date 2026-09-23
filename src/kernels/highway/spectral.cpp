@@ -8,7 +8,8 @@ HWY_BEFORE_NAMESPACE();
 namespace neo_fft {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
-void SpectralPrevalidated(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
+template<bool LinearWiener,bool Table>
+void SpectralImpl(std::complex<float>* x, const std::complex<float>* grid, std::size_t count, float scale,
               const SpectralParams& p) {
   const hn::ScalableTag<float> d;
   if (!count)
@@ -17,9 +18,15 @@ void SpectralPrevalidated(std::complex<float>* x, const std::complex<float>* gri
   const auto zero = hn::Zero(d), one = hn::Set(d, 1.0f), eps = hn::Set(d, 1e-15f);
   const auto uniform_a = hn::Set(d, p.a), b = hn::Set(d, p.b), low = hn::Set(d, p.low), high = hn::Set(d, p.high);
   auto non_finite = hn::MaskFalse(d);
-  auto compute_gain = [&](auto power, std::size_t offset) {
-    const auto a = p.primary_mode == PrimaryMode::Table ? hn::LoadU(d, p.primary.data() + offset) : uniform_a;
-    switch (p.type) {
+  // clang-cl does not inherit the surrounding target attribute into lambdas.
+  auto compute_gain = [&](auto power, std::size_t offset) HWY_ATTR {
+    auto a = uniform_a;
+    if constexpr (LinearWiener) {
+      if constexpr (Table) a = hn::LoadU(d, p.primary.data() + offset);
+    } else if (p.primary_mode == PrimaryMode::Table) a = hn::LoadU(d, p.primary.data() + offset);
+    if constexpr (LinearWiener) {
+      return hn::Max(hn::Div(hn::Sub(power, a), hn::Add(power, eps)), zero);
+    } else switch (p.type) {
       case -2:
         return one;
       case -1: {
@@ -62,9 +69,9 @@ void SpectralPrevalidated(std::complex<float>* x, const std::complex<float>* gri
   // C++ explicitly permits float-array access to std::complex<float> storage.
   auto* output = reinterpret_cast<float*>(x);
   const auto* model = reinterpret_cast<const float*>(grid);
-  auto enhance = [&](auto power, std::size_t offset) {
+  auto enhance = [&](auto power, std::size_t offset) HWY_ATTR {
     const auto& e = p.enhancement;
-    auto check = [&](auto v) { non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(v))); return v; };
+    auto check = [&](auto v) HWY_ATTR { non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(v))); return v; };
     auto gain = one;
     const auto q = check(hn::Add(power, eps));
     if (e.sharpen != 0 && e.b != 0) {
@@ -82,48 +89,74 @@ void SpectralPrevalidated(std::complex<float>* x, const std::complex<float>* gri
   };
   std::size_t k = 0;
   if (!grid) {
-    for (; count - k >= lanes; k += lanes) {
+    auto process = [&](std::size_t offset) HWY_ATTR {
       auto re = zero, im = zero;
-      hn::LoadInterleaved2(d, output + 2 * k, re, im);
+      hn::LoadInterleaved2(d, output + 2 * offset, re, im);
       const auto power = hn::Add(hn::Mul(re, re), hn::Mul(im, im));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
-      auto gain = compute_gain(power, k);
-      if (p.enhancement.active()) gain = hn::Mul(gain, enhance(power, k));
+      auto gain = compute_gain(power, offset);
+      if constexpr (!LinearWiener)
+        if (p.enhancement.active()) gain = hn::Mul(gain, enhance(power, offset));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Mul(gain, re);
       im = hn::Mul(gain, im);
       non_finite = hn::Or(non_finite, hn::Not(hn::And(hn::IsFinite(re), hn::IsFinite(im))));
-      hn::StoreInterleaved2(re, im, d, output + 2 * k);
+      hn::StoreInterleaved2(re, im, d, output + 2 * offset);
+    };
+    if constexpr (LinearWiener) {
+      for (; count - k >= 2 * lanes; k += 2 * lanes) {
+        process(k); process(k + lanes);
+      }
     }
+    for (; count - k >= lanes; k += lanes) process(k);
   } else {
     const auto scale_v = hn::Set(d, scale);
-    for (; count - k >= lanes; k += lanes) {
+    auto process = [&](std::size_t offset) HWY_ATTR {
       auto re = zero, im = zero, mr = zero, mi = zero;
-      hn::LoadInterleaved2(d, output + 2 * k, re, im);
-      hn::LoadInterleaved2(d, model + 2 * k, mr, mi);
+      hn::LoadInterleaved2(d, output + 2 * offset, re, im);
+      hn::LoadInterleaved2(d, model + 2 * offset, mr, mi);
       mr = hn::Mul(mr, scale_v);
       mi = hn::Mul(mi, scale_v);
       re = hn::Sub(re, mr);
       im = hn::Sub(im, mi);
       const auto power = hn::Add(hn::Mul(re, re), hn::Mul(im, im));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(power)));
-      auto gain = compute_gain(power, k);
-      if (p.enhancement.active()) gain = hn::Mul(gain, enhance(power, k));
+      auto gain = compute_gain(power, offset);
+      if constexpr (!LinearWiener)
+        if (p.enhancement.active()) gain = hn::Mul(gain, enhance(power, offset));
       non_finite = hn::Or(non_finite, hn::Not(hn::IsFinite(gain)));
       re = hn::Add(hn::Mul(gain, re), mr);
       im = hn::Add(hn::Mul(gain, im), mi);
       non_finite = hn::Or(non_finite, hn::Not(hn::And(hn::IsFinite(re), hn::IsFinite(im))));
-      hn::StoreInterleaved2(re, im, d, output + 2 * k);
+      hn::StoreInterleaved2(re, im, d, output + 2 * offset);
+    };
+    if constexpr (LinearWiener) {
+      for (; count - k >= 2 * lanes; k += 2 * lanes) {
+        process(k); process(k + lanes);
+      }
     }
+    for (; count - k >= lanes; k += lanes) process(k);
   }
   if (!hn::AllFalse(d, non_finite))
     throw std::runtime_error("non-finite sample or intermediate");
-  auto tail = p;
-  if (p.primary_mode == PrimaryMode::Table)
-    tail.primary = {p.primary.data() + k, count - k};
-  if (p.enhancement.sharpen) tail.enhancement.sharpen_window = {p.enhancement.sharpen_window.data() + k, count - k};
-  if (p.enhancement.dehalo) tail.enhancement.halo_window = {p.enhancement.halo_window.data() + k, count - k};
-  detail::spectral_prevalidated(x + k, grid ? grid + k : nullptr, count - k, scale, tail);
+  if (k < count) {
+    auto tail = p;
+    if (p.primary_mode == PrimaryMode::Table)
+      tail.primary = {p.primary.data() + k, count - k};
+    if (p.enhancement.sharpen) tail.enhancement.sharpen_window = {p.enhancement.sharpen_window.data() + k, count - k};
+    if (p.enhancement.dehalo) tail.enhancement.halo_window = {p.enhancement.halo_window.data() + k, count - k};
+    detail::spectral_prevalidated(x + k, grid ? grid + k : nullptr, count - k, scale, tail);
+  }
+}
+
+void SpectralPrevalidated(std::complex<float>* x,const std::complex<float>* grid,std::size_t count,float scale,
+                           const SpectralParams& p) {
+  // Choose the admitted linear branch once per block, retaining exact division
+  // and the same finite checks. Other filters/exponents/enhancement stay generic.
+  if(p.type==0 && std::abs(p.exponent-1.0f)<0.00005f && !p.enhancement.active()) {
+    if(p.primary_mode==PrimaryMode::Table)SpectralImpl<true,true>(x,grid,count,scale,p);
+    else SpectralImpl<true,false>(x,grid,count,scale,p);
+  } else SpectralImpl<false,false>(x,grid,count,scale,p);
 }
 
 template<class D,class V> HWY_INLINE void TemporalAccumulate(D d,V xr,V xi,
