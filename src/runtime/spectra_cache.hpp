@@ -28,16 +28,17 @@ class SpectraCache {
   using FrameItem=std::pair<const int,Frame>;
   using Frames=std::map<int,Frame,std::less<int>,ControlAllocator<FrameItem>>;
 public:
+  static constexpr int default_mb=128;
   using Lease=std::shared_ptr<const std::complex<float>>;
   struct Stats {
     std::uint64_t requests=0,hits=0,waits=0,builds=0,bypasses=0,evictions=0;
     std::uint64_t requested_bins=0,computed_bins=0;
     std::size_t bytes=0,peak_bytes=0,rows=0,frames=0;
   };
-  SpectraCache(std::array<std::size_t,3> bins,int temporal,int frames=-1,int mb=512,
+  SpectraCache(std::array<std::size_t,3> bins,int temporal,int frames=-1,int mb=default_mb,
                std::array<int,3> rows={1,1,1})
       :bins_(bins),rows_(rows),temporal_(temporal),requested_frames_(frames),
-       budget_(mul_size(std::size_t(mb==-1 ? 512 : std::max(0,mb)),1024*1024)),
+       budget_(mul_size(std::size_t(mb==-1 ? default_mb : std::max(0,mb)),1024*1024)),
        index_(ControlAllocator<Item>(&node_bytes_)),frames_(ControlAllocator<FrameItem>(&frame_bytes_)) {
     require(frames>=-1 && mb>=-1,"FFT3D cache limits must be >= -1");
     require(temporal>=1 && temporal<=5,"invalid cache temporal size");

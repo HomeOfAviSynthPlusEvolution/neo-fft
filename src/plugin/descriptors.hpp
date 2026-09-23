@@ -168,7 +168,7 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.ncpu=p.integer("ncpu",2);
   c.mt=p.boolean("mt",false);
   c.cache_frames=p.integer("cache_frames",-1);
-  c.cache_mb=p.integer("cache_mb",512);
+  c.cache_mb=p.integer("cache_mb",runtime::SpectraCache::default_mb);
   p.backend();
   validate(c);
   return c;

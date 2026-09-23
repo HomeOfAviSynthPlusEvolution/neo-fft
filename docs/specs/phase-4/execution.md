@@ -11,7 +11,7 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 | FFT3D mt | false: own work runs on the calling host worker; true: selected planes may run concurrently, maximum actual plane count (<=3) |
 | FFT3D ncpu | Positive int32 requested maximum FFT workers; default 2; PocketFFT effective 1 |
 | FFT3D cache_frames | Default -1: auto `bt + host_threads - 1`; 0 disables raw-frequency caching; positive int32 is a frame limit; values below -1 fail |
-| FFT3D cache_mb | Default 512 MiB; -1 selects the same default budget; 0 disables raw-frequency caching; positive int32 is a memory limit; values below -1 fail |
+| FFT3D cache_mb | Default 128 MiB; -1 selects the same default budget; 0 disables raw-frequency caching; positive int32 is a memory limit; values below -1 fail |
 | DFTTest threads | <=0 resolves to 1; positive values clamp to 16; requested maximum own workers, further limited by available independent work |
 | DFTTest fft_threads | <=0 resolves to 1; positive int32 requested maximum FFT workers; PocketFFT effective 1 |
 | FFT3D measure | Planning hint only; PocketFFT ignores it; never changes semantic mode |

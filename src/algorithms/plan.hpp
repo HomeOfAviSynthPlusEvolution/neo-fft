@@ -33,7 +33,7 @@ struct FFT3DConfig {
   int left = 0, top = 0, right = 0, bottom = 0;
   bool interlaced = false, mt = false;
   int ncpu = 2;
-  int cache_frames = -1, cache_mb = 512;
+  int cache_frames = -1, cache_mb = runtime::SpectraCache::default_mb;
 };
 struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
