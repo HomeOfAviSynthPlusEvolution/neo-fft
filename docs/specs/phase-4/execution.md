@@ -10,6 +10,8 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 | DFTTest opt | Only 0,1,2,3,8; 1 selects own scalar, all others automatic Highway |
 | FFT3D mt | false: own work runs on the calling host worker; true: selected planes may run concurrently, maximum actual plane count (<=3) |
 | FFT3D ncpu | Positive int32 requested maximum FFT workers; default 2; PocketFFT effective 1 |
+| FFT3D cache_frames | Default -1: auto `bt + host_threads - 1`; 0 disables raw-frequency caching; positive int32 is a frame limit; values below -1 fail |
+| FFT3D cache_mb | Default 512 MiB; -1 selects the same default budget; 0 disables raw-frequency caching; positive int32 is a memory limit; values below -1 fail |
 | DFTTest threads | <=0 resolves to 1; positive values clamp to 16; requested maximum own workers, further limited by available independent work |
 | DFTTest fft_threads | <=0 resolves to 1; positive int32 requested maximum FFT workers; PocketFFT effective 1 |
 | FFT3D measure | Planning hint only; PocketFFT ignores it; never changes semantic mode |
@@ -42,6 +44,18 @@ Idle workspace retention is capped at 64 MiB and at most the resolved own-worker
 No exception crosses a C/host callback boundary. Preserve an owned error string for as long as the host/DS2 can use it; never return a pointer into a destroyed exception or temporary string. Identify invalid-argument, unsupported-feature, resource and frame-processing failures structurally in tests, by stage/category; do not infer outcomes from localized message substrings. Human messages should include the function, offending parameter or frame/plane and meaningful context without promising identical reference wording.
 
 Only publish fully initialized output. On any worker failure join/cancel outstanding work safely, discard that output/private state and return one stable error; do not return a partly copied frame. Other in-flight requests retain valid model/checkpoint/workspace leases. Release handles exactly once on success, error and cancellation. A failed speculative duplicate model build cannot invalidate a ready published model.
+
+## Optional FFT3D input-spectrum cache
+
+For ordinary bt=2..5 requests, an instance may share complete finite raw spatial FFT spectra, after input centering, reflection and analysis windows but before any grid subtraction, filtering or enhancement. A key is the actual source frame and selected plane within one immutable source/configuration/ROI/backend instance. Packed interlaced geometry is part of that instance. Endpoint single-frame fallback may reuse the same raw product. bt=-1/0/1 and preview bypass this cache.
+
+Both public limits apply together, allocation is demand-driven, and no limit depends on clip length. Auto frames uses AviSynth's CACHE_INFORM_NUM_THREADS when delivered, otherwise one worker; VapourSynth resolves from core.numThreads at creation. This is a capacity heuristic for adjacent requests, not a guarantee about actual in-flight frames. Positive explicit frame limits are not changed by thread notifications.
+
+Each retained frame reserves its full selected-plane spectrum payload plus actual entry/control/list-node storage, even while some planes have not been built. The memory limit includes building and leased entries; pinned entries cannot be evicted or uncharged. No spectrum payload is allocated before admission. A small candidate bookkeeping allocation may precede admission; the fixed cache object, allocator overhead and request workspaces remain outside this entry budget. A miss that cannot reserve capacity uses the existing bounded-block path without waiting for memory. Decreasing an auto frame limit trims unpinned entries; existing pins remain valid and are trimmed on subsequent access after release.
+
+Same-frame/plane construction is single-flight. Waiters release the cache mutex. The producer executes synchronously from already acquired source pixels, does not call the host, acquire another cache entry, or wait for another output request, and either publishes a complete finite plane or signals failure. Thus there is no request dependency cycle. Failed products are never returned; existing waiters receive the failure, future requests may recompute uncached until eviction. Successfully built independent raw planes can survive a later output failure. They contain no mutable filter output and no host frame owners.
+
+The cache must preserve bit-identical output within one arithmetic configuration for enabled/disabled, small-budget fallback, eviction, sequential/reverse/shuffled/repeated and concurrent requests. Memory accounting and publication/failure tests are required independently of timing.
 
 ## Teardown and dependency gate
 

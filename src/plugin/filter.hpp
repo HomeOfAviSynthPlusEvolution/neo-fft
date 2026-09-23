@@ -27,6 +27,7 @@ struct Filter {
     bool kalman = false;
     std::shared_ptr<runtime::Executor> executor=std::make_shared<runtime::Executor>(1);
     std::shared_ptr<runtime::Retention> retention;
+    std::shared_ptr<runtime::SpectraCache> spectra;
     int requested_fft_workers=1;
     std::shared_ptr<runtime::Checkpoints> checkpoints = std::make_shared<runtime::Checkpoints>();
     std::shared_ptr<std::atomic<bool>> models_ready = std::make_shared<std::atomic<bool>>(false);
@@ -101,6 +102,11 @@ struct Filter {
       }
     if constexpr (A == Algorithm::FFT3D) {
       state.pattern_frame = std::clamp(config.pframe, 0, info.num_frames-1);
+      std::array<std::size_t,3> bins{};
+      for(int p=0;p<f.plane_count;++p)if(const auto& plan=state.plans[p]) {
+        bins[p]=mul_size(mul_size(plan->geometry.x.count,plan->geometry.y.count),plan->fft.bins());
+      }
+      if(config.bt>1)state.spectra=std::make_shared<runtime::SpectraCache>(bins,config.bt,config.cache_frames,config.cache_mb);
       for (const auto& plan : state.plans) if (plan) {
         if (plan->preview()) state.temporal_size = 1;
         state.sampled = state.sampled || plan->needs_pattern_frame();
@@ -112,6 +118,15 @@ struct Filter {
   }
   static ds::VideoRequestPattern request_pattern(int, const State& state) {
     return state.kalman || state.temporal_size > 1 || state.sampled || state.dft_noise ? ds::VideoRequestPattern::General : ds::VideoRequestPattern::StrictSpatial;
+  }
+  static int cache_hints(ds::VideoCacheHintsContext& ctx) {
+    // AviSynth V12 CACHE_INFORM_NUM_THREADS / AVS_CACHE_INFORM_NUM_THREADS.
+    // Numeric ABI constant keeps the host-independent core free of AVS headers.
+    if constexpr(A==Algorithm::FFT3D)if(ctx.cachehints==514) {
+      auto& state=ctx.state<State>();
+      if(state.spectra)state.spectra->inform_threads(ctx.frame_range);
+    }
+    return ctx.default_response;
   }
   struct RequestState {
     bool initialized=false, sample=false, ordinary=false;
@@ -283,7 +298,7 @@ struct Filter {
     return ds::Result<ds::VideoRequestResult>::success({});
   }
   template <class T>
-  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi, int frame, int plane_index,span2d::Span<const int> targets={}) {
+  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi, int frame, int plane_index,span2d::Span<const int> targets={},runtime::SpectraCache* spectra_cache=nullptr) {
     const auto de = plane_extent<T>(dst.width, dst.height, dst.stride_bytes);
     auto d = checked_plane(static_cast<T*>(static_cast<void*>(dst.data)), dst.width, dst.height, dst.stride_bytes, de);
 
@@ -323,7 +338,7 @@ struct Filter {
         if (!roi.interlaced) {
           for (auto& source : checked_srcs)
             source = checked_subplane(source,roi.left,roi.top,roi.width,roi.height);
-          plan->process({checked_srcs.data(),checked_srcs.size()},checked_subplane(d,roi.left,roi.top,roi.width,roi.height));
+          plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},checked_subplane(d,roi.left,roi.top,roi.width,roi.height),frame,plane_index,{},spectra_cache);
           return;
         }
         std::vector<PackedROI<T>> packed;
@@ -332,7 +347,7 @@ struct Filter {
         std::vector<span2d::Plane<const T>> views;
         for (auto& image : packed) views.push_back(image.view);
         PackedROI<T> output(original,roi,plan->copy_row());
-        plan->process({views.data(),views.size()},output.view);
+        plan->process_at<T>({views.data(),views.size()},output.view,frame,plane_index,{},spectra_cache);
         output.write(d,roi);
       } else plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},d,frame,plane_index,targets);
     } else {
@@ -485,15 +500,15 @@ struct Filter {
       switch (state.source.format.sample_format) {
         case ds::SampleFormat::UInt8:
           plane<std::uint8_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                              state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()});
+                              state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get());
           break;
         case ds::SampleFormat::Float32:
           plane<float>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                       state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()});
+                       state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get());
           break;
         default:
           plane<std::uint16_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                               state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()});
+                               state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get());
           break;
       }
     };

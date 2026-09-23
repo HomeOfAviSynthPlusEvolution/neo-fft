@@ -14,6 +14,7 @@
 #include "runtime/executor.hpp"
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
+#include "runtime/spectra_cache.hpp"
 
 namespace neo_fft {
 enum class Algorithm { FFT3D, DFTTest };
@@ -32,6 +33,7 @@ struct FFT3DConfig {
   int left = 0, top = 0, right = 0, bottom = 0;
   bool interlaced = false, mt = false;
   int ncpu = 2;
+  int cache_frames = -1, cache_mb = 512;
 };
 struct DFTConfig {
   int block = 16, overlap = 12, mode = 1, swin = 0, twin = 7, ftype = 0, opt = 0, tbsize = 1;
@@ -74,8 +76,8 @@ public:
                runtime::Workspace& ws) const;
 
   template<class T> void process_at(span2d::Span<const span2d::Plane<const T>> sources,
-                                    span2d::Plane<T> dst,int frame,int plane,span2d::Span<const int> targets = {}) const {
-    auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane,nullptr,targets);
+                                    span2d::Plane<T> dst,int frame,int plane,span2d::Span<const int> targets = {},runtime::SpectraCache* cache = nullptr) const {
+    auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane,nullptr,targets,cache);
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
   const runtime::Executor& executor() const {return *executor_;}
@@ -137,6 +139,6 @@ private:
   float beta_ = 1.0f;
   mutable runtime::WorkspacePool pool_;
   template <class T>
-  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0, const KalmanState* kalman=nullptr,span2d::Span<const int> targets={}) const;
+  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0, const KalmanState* kalman=nullptr,span2d::Span<const int> targets={},runtime::SpectraCache* cache=nullptr) const;
 };
 } // namespace neo_fft

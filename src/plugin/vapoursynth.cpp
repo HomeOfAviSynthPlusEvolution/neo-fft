@@ -28,7 +28,26 @@ template <Algorithm A>
 void VS_CC create(const VSMap* in, VSMap* out, void*, VSCore* core, const VSAPI* api) {
   try {
     validate_supplied(in, api, A);
-    ds::vapoursynth::create_video_filter_bridge<Bridge<A>>(in, out, core, api);
+    if constexpr(A==Algorithm::FFT3D) {
+      // VS has no AviSynth cache-hint notification. Resolve auto capacity from
+      // the core's configured worker count at creation, without mutating input.
+      const int supplied=api->mapNumElements(in,"cache_frames");
+      require(supplied==-1 || supplied==1,"cache_frames: expected one integer");
+      int error=0;
+      const auto frames=api->mapGetInt(in,"cache_frames",0,&error);
+      if(error || frames==-1) {
+        VSCoreInfo info{};api->getCoreInfo(core,&info);
+        const auto bt_value=api->mapGetInt(in,"bt",0,&error);
+        const int bt=error ? 3 : int(bt_value);
+        const auto count=std::min<std::int64_t>(INT32_MAX,std::int64_t(std::max(1,bt))+std::max(1,info.numThreads)-1);
+        const auto free_map=[&](VSMap* map){api->freeMap(map);};
+        std::unique_ptr<VSMap,decltype(free_map)> params(api->createMap(),free_map);
+        require(bool(params),"cache auto parameters allocation failed");
+        api->copyMap(in,params.get());
+        require(!api->mapSetInt(params.get(),"cache_frames",count,maReplace),"cache auto parameter failed");
+        ds::vapoursynth::create_video_filter_bridge<Bridge<A>>(params.get(),out,core,api);
+      } else ds::vapoursynth::create_video_filter_bridge<Bridge<A>>(in,out,core,api);
+    } else ds::vapoursynth::create_video_filter_bridge<Bridge<A>>(in, out, core, api);
     if (const auto* e = api->mapGetError(out)) {
       const std::string owned = std::string(Bridge<A>::vs_name) + ": " + e;
       api->mapSetError(out, owned.c_str());

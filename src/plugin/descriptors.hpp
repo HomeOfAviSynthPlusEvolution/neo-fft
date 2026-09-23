@@ -30,6 +30,8 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm) {
     for (auto n : {"l", "t", "r", "b", "opt", "ncpu"})
       add(n);
     add("mt", P::Boolean);
+    add("cache_frames");
+    add("cache_mb");
   } else {
     add("ftype");
     for (auto n : {"sigma", "sigma2", "pmin", "pmax"})
@@ -165,6 +167,8 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.ht = p.number("ht", 50.0f);
   c.ncpu=p.integer("ncpu",2);
   c.mt=p.boolean("mt",false);
+  c.cache_frames=p.integer("cache_frames",-1);
+  c.cache_mb=p.integer("cache_mb",512);
   p.backend();
   validate(c);
   return c;
