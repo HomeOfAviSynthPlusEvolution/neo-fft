@@ -1,6 +1,6 @@
 # FFT3D phase-4 interface
 
-Specification: F3D-VS-004. Extends [phase-3 interface](../../phase-3/fft3d/plugin.md). The user-directed execution revision removes mt from the public signature; neither true nor false is accepted. Host frame concurrency remains supported.
+Specification: F3D-VS-004. Extends [phase-3 interface](../../phase-3/fft3d/plugin.md). The user-directed execution revisions remove mt, ncpu and measure from the public signature; supplying any of them fails creation, including historical defaults. Host frame concurrency remains supported.
 
 | Parameter | Domain/default | Meaning |
 | --- | --- | --- |
@@ -8,7 +8,7 @@ Specification: F3D-VS-004. Extends [phase-3 interface](../../phase-3/fft3d/plugi
 | kratio | binary32, default 2; >=0 | Kalman per-component motion threshold ratio; raw domain always checked |
 | l,t,r,b | int32, default 0; >=0 | Full-resolution pixel margins; [ROI rules](kernel-roi-fields.md) |
 | interlaced | bool, default false | Pack/unpack ROI rows using the specified full-height permutation |
-| opt,ncpu,measure | Existing types/defaults | [Execution mapping](../execution.md); historical opt aliases opened; FFT3D plane work stays on the calling host worker |
+| opt | Existing type/default | [Execution mapping](../execution.md); historical opt aliases opened; FFT3D plane work stays on the calling host worker |
 
 Resolve precedence before allocating derived tables:
 

@@ -9,13 +9,12 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 | FFT3D opt | Any int32 accepted, matching the pinned dispatcher; 1 selects own scalar kernels, every other value automatic Highway |
 | DFTTest opt | Only 0,1,2,3,8; 1 selects own scalar, all others automatic Highway |
 | FFT3D mt | Removed by the user-directed execution-policy revision; supplying it fails creation. All plane work runs on the calling host worker |
-| FFT3D ncpu | Positive int32 requested maximum FFT workers; default 2; PocketFFT effective 1 |
 | FFT3D cache_frames | Default -1: auto `bt + host_threads - 1`; 0 disables raw-frequency caching; positive int32 is a frame limit; values below -1 fail |
 | FFT3D cache_mb | Default 128 MiB; -1 selects the same default budget; 0 disables raw-frequency caching; positive int32 is a memory limit; values below -1 fail |
 | DFTTest threads | <=0 resolves to 1; positive values clamp to 16; requested maximum own workers, further limited by available independent work |
-| DFTTest fft_threads | <=0 resolves to 1; positive int32 requested maximum FFT workers; PocketFFT effective 1 |
-| FFT3D measure | Planning hint only; PocketFFT ignores it; never changes semantic mode |
 | fft_backend | PocketFFT required/default; unavailable explicit FFTW fails creation; no silent fallback |
+
+FFT3D ncpu and measure, and DFTTest fft_threads, have been removed by the user-directed interface cleanup. Supplying them fails creation, including historical defaults. No requested FFT-worker state is retained. KernelInfo's read-only fft_threads=1 still reports the backend's effective count; it is not a filter parameter.
 
 opt aliases do not force a named instruction set or bypass runtime CPU capability checks. opt=1 controls own kernels, not the third-party FFT's ISA. Do not accidentally map historical opt=8 to a GPU backend.
 
@@ -23,7 +22,7 @@ FFT3D has no internal executor, including ordinary filtering, preview, Kalman re
 
 DFTTest threads>1 still schedules independent block transforms/filtering within bounded batches; its policy is unchanged by this FFT3D revision. Automatic own-worker count is one. Share each instance's additional worker capacity across its requests, bounded by the resolved count minus the participating caller (resolved count <=16). A caller without an available internal worker executes inline. Test with enough independent work and an active-worker counter; no throughput target is imposed. Do not block a host callback waiting for a worker/workspace owned by an unrelated request that itself needs host progress.
 
-Required PocketFFT remains single-threaded internally. If optional FFTW is delivered, report a checked effective FFT-worker maximum bounded by 16 and available backend capability; unsupported threaded capability resolves to 1. To avoid nested internal teams, choose own parallelism or FFT parallelism for a request: if effective FFT workers>1, effective own workers=1. Plan creation/destruction and any global backend thread/planner state must be synchronized without affecting active plans. Changing one instance's controls must not mutate another's plan. Record requested/effective controls in test manifests; no extra frame properties are added.
+PocketFFT remains single-threaded internally and has no user-controlled measured planning. This revision supersedes earlier contracts for ncpu, measure and fft_threads, including the optional FFTW control mapping; it does not implement another backend. Record the effective execution settings in test manifests; no extra frame properties are added.
 
 ## Deterministic work partitioning
 

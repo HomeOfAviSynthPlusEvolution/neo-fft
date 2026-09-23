@@ -27,7 +27,6 @@ struct Filter {
     bool kalman = false;
     std::shared_ptr<runtime::Retention> retention;
     std::shared_ptr<runtime::SpectraCache> spectra;
-    int requested_fft_workers=1;
     std::shared_ptr<runtime::Checkpoints> checkpoints = std::make_shared<runtime::Checkpoints>();
     std::shared_ptr<std::atomic<bool>> models_ready = std::make_shared<std::atomic<bool>>(false);
   };
@@ -80,8 +79,7 @@ struct Filter {
     std::shared_ptr<runtime::Executor> executor;
     if constexpr(A==Algorithm::DFTTest) executor=std::make_shared<runtime::Executor>(workers);
     state.retention=std::make_shared<runtime::Retention>(workers);
-    if constexpr(A==Algorithm::FFT3D) state.requested_fft_workers=config.ncpu;
-    else {state.requested_fft_workers=config.fft_threads;state.temporal_mode=config.temporal_mode;state.temporal_overlap=config.temporal_overlap;}
+    if constexpr(A==Algorithm::DFTTest) {state.temporal_mode=config.temporal_mode;state.temporal_overlap=config.temporal_overlap;}
     state.sample_bits = ds::bits_per_sample(f.sample_format);
     for (int p = 0; p < f.plane_count; ++p)
       if (selected[p]) {

@@ -10,7 +10,7 @@ def main():
     src,_,_=source(vs,dict(format='rgb',bits=8,width=128,height=96,frames=7),41)
     for bt in (-1,0,1,3,5):
         kw=dict(bt=bt,bw=8,bh=8,l=2,t=2,r=2,b=2,interlaced=True,opt=args.opt)
-        a=c.neo_fft.FFT3D(src,ncpu=1,**kw);b=c.neo_fft.FFT3D(src,ncpu=2147483647,**kw)
+        a=c.neo_fft.FFT3D(src,**kw);b=c.neo_fft.FFT3D(src,**kw)
         order=(6,0,2,4)
         expected=[a.get_frame(n) for n in order]
         pending=[b.get_frame_async(n) for n in order]
@@ -26,8 +26,8 @@ def main():
         for mode in (0,1):
             for dither in (0,1,4):
                 kw=dict(tbsize=T,sbsize=9 if mode==0 else 8,smode=mode,sosize=4,dither=dither,dither_seed=17,opt=args.opt)
-                a=c.neo_fft.DFTTest(src,threads=1,fft_threads=1,**kw)
-                b=c.neo_fft.DFTTest(src,threads=3,fft_threads=2147483647,**kw)
+                a=c.neo_fft.DFTTest(src,threads=1,**kw)
+                b=c.neo_fft.DFTTest(src,threads=3,**kw)
                 for n in (6,2,0):
                     fa=a.get_frame(n);fb=b.get_frame(n)
                     for p in range(3):assert np.asarray(fa[p]).tobytes()==np.asarray(fb[p]).tobytes(),(T,mode,dither,n,p)

@@ -56,13 +56,20 @@ def main():
         fails(lambda:call(src,**{temporal:1},sigma='wrong'))
         fails(lambda:call(src,**{temporal:1},unknown=0))
     for kwargs in [dict(sharpen=-.1),dict(sigma2=-1),dict(l=-1),dict(kratio=-1),
-                   dict(wintype=3),dict(beta=0),dict(ncpu=0),dict(ow=17),dict(bw=1)]:
+                   dict(wintype=3),dict(beta=0),dict(ow=17),dict(bw=1)]:
         fails(lambda:c.neo_fft.FFT3D(src,bt=1,**kwargs))
     for kwargs in [dict(dither=-1),dict(nlocation=[0]),dict(ssx=[1.]),
                    dict(ftype=5),dict(f0beta=0),dict(pmin=2,pmax=1),dict(sbsize=8,sosize=5),dict(swin=12),
                    dict(smode=0,sbsize=4),dict(dither_seed=-1),dict(alpha=0)]:
         fails(lambda:c.neo_fft.DFTTest(src,tbsize=1,planes=[],**kwargs))
-    c.neo_fft.DFTTest(src,tbsize=1,smode=0,sbsize=3,sosize=-999,tosize=-999,threads=-1,fft_threads=-1).get_frame(0)
+    # Removed execution controls must fail even with formerly valid/default values.
+    for name,removed in [('FFT3D',dict(ncpu=(0,1,2),measure=(False,True))),
+                         ('DFTTest',dict(fft_threads=(-1,0,1,4)))]:
+        call=getattr(c.neo_fft,name)
+        for parameter,values in removed.items():
+            for value in values:
+                fails(lambda:call(src,**{parameter:value}))
+    c.neo_fft.DFTTest(src,tbsize=1,smode=0,sbsize=3,sosize=-999,tosize=-999,threads=-1).get_frame(0)
     small=c.std.BlankClip(width=1,height=1,format=vs.GRAY8,color=[12])
     c.neo_fft.DFTTest(small,tbsize=1,smode=0,sbsize=1).get_frame(0)
     fails(lambda:c.neo_fft.DFTTest(small,tbsize=1,smode=1,sbsize=1,sosize=0),'reflection')

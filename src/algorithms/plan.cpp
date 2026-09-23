@@ -50,7 +50,6 @@ void validate(const FFT3DConfig& c) {
   require(c.wintype >= 0 && c.wintype <= 2, "FFT3D wintype outside 0..2");
   require(c.bt >= -1 && c.bt <= 5, "FFT3D bt outside -1..5");
   nonnegative(c.kratio,"kratio");
-  require(c.ncpu>0,"ncpu must be positive");
   validate(c.enhancement);
   nonnegative(c.pfactor, "FFT3D pfactor");
   require(std::isfinite(c.pcutoff) && c.pcutoff > 0, "FFT3D pcutoff must be positive");

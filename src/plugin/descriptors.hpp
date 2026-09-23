@@ -20,14 +20,13 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm) {
       add(n);
     for (auto n : {"kratio", "sharpen", "scutoff", "svr", "smin", "smax"})
       add(n, P::Float);
-    add("measure", P::Boolean);
     add("interlaced", P::Boolean);
     for (auto n : {"wintype", "pframe", "px", "py"})
       add(n);
     add("pshow", P::Boolean);
     for (auto n : {"pcutoff", "pfactor", "sigma2", "sigma3", "sigma4", "degrid", "dehalo", "hr", "ht"})
       add(n, P::Float);
-    for (auto n : {"l", "t", "r", "b", "opt", "ncpu"})
+    for (auto n : {"l", "t", "r", "b", "opt"})
       add(n);
     add("cache_frames");
     add("cache_mb");
@@ -48,7 +47,7 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm) {
     for (auto n : {"ssystem", "dither", "dither_seed"})
       add(n);
     add("planes", P::Integer, true);
-    for (auto n : {"opt", "threads", "fft_threads"})
+    for (auto n : {"opt", "threads"})
       add(n);
     add("fft_backend", P::String);
   }
@@ -149,7 +148,6 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.svr = p.number("svr", 1.0f);
   c.enhancement.smin = p.number("smin", 4.0f);
   c.enhancement.smax = p.number("smax", 20.0f);
-  p.boolean("measure", true);
   c.interlaced = p.boolean("interlaced", false);
   c.left = p.integer("l", 0); c.top = p.integer("t", 0);
   c.right = p.integer("r", 0); c.bottom = p.integer("b", 0);
@@ -164,7 +162,6 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.dehalo = p.number("dehalo", 0.0f);
   c.enhancement.hr = p.number("hr", 2.0f);
   c.enhancement.ht = p.number("ht", 50.0f);
-  c.ncpu=p.integer("ncpu",2);
   c.cache_frames=p.integer("cache_frames",-1);
   c.cache_mb=p.integer("cache_mb",runtime::SpectraCache::default_mb);
   p.backend();
@@ -205,7 +202,6 @@ inline DFTConfig dft_config(Params p) {
   c.dither=p.integer("dither",0);
   c.dither_seed=p.integer("dither_seed",0);
   c.threads=std::clamp(p.integer("threads",0),1,16);
-  c.fft_threads=std::max(1,p.integer("fft_threads",0));
   p.backend();
   validate(c);
   return c;

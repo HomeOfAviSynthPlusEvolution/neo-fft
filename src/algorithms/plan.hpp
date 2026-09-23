@@ -32,7 +32,6 @@ struct FFT3DConfig {
   bool pshow = false;
   int left = 0, top = 0, right = 0, bottom = 0;
   bool interlaced = false;
-  int ncpu = 2;
   int cache_frames = -1, cache_mb = runtime::SpectraCache::default_mb;
 };
 struct DFTConfig {
@@ -40,7 +39,7 @@ struct DFTConfig {
   float sbeta = 2.5f, tbeta = 2.5f, sigma = 8, sigma2 = 8, pmin = 0, pmax = 500, f0beta = 1;
   bool zmean = true;
   int temporal_mode = 0, temporal_overlap = 0;
-  int dither = 0, dither_seed = 0, threads = 1, fft_threads = 1;
+  int dither = 0, dither_seed = 0, threads = 1;
   DFTCurves curves;
   std::vector<NoiseLocation> locations;
   std::optional<float> alpha;
