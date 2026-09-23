@@ -76,8 +76,8 @@ public:
                runtime::Workspace& ws) const;
 
   template<class T> void process_at(span2d::Span<const span2d::Plane<const T>> sources,
-                                    span2d::Plane<T> dst,int frame,int plane,span2d::Span<const int> targets = {},runtime::SpectraCache* cache = nullptr) const {
-    auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane,nullptr,targets,cache);
+                                    span2d::Plane<T> dst,int frame,int plane,span2d::Span<const int> targets = {},runtime::SpectraCache* cache = nullptr,runtime::SpectraCache::Request* registration=nullptr) const {
+    auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane,nullptr,targets,cache,registration);
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
   const runtime::Executor& executor() const {return *executor_;}
@@ -139,6 +139,6 @@ private:
   float beta_ = 1.0f;
   mutable runtime::WorkspacePool pool_;
   template <class T>
-  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0, const KalmanState* kalman=nullptr,span2d::Span<const int> targets={},runtime::SpectraCache* cache=nullptr) const;
+  void run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame=0, int plane=0, const KalmanState* kalman=nullptr,span2d::Span<const int> targets={},runtime::SpectraCache* cache=nullptr,runtime::SpectraCache::Request* registration=nullptr) const;
 };
 } // namespace neo_fft

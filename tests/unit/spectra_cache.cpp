@@ -51,6 +51,80 @@ void ownership() {
   CHECK(resized.get(5,0,0,fill));CHECK(resized.bytes()==before/2);
 }
 
+void registered_eviction() {
+  const auto fill=[](auto* dst){dst[0]={7,9};};
+  const auto must_hit=[](auto*){throw std::runtime_error("evicted pending row");};
+  Cache cache({64000,0,0},3,100,1,{4,0,0});
+  auto request=cache.register_request(0,0);
+  CHECK(cache.get(0,0,0,fill) && cache.get(1,0,0,fill));
+  CHECK(cache.get(2,0,0,fill)); // Keep old frame 0 for its registered consumer.
+  CHECK(cache.get(0,0,0,must_hit));
+  CHECK(cache.stats().evicted_needed_rows==0 && cache.stats().active_requests==1);
+  request->complete_row(0,0);
+  CHECK(cache.get(3,0,0,fill)); // Frame 0 is now expendable even though just touched.
+  int rebuilds=0;
+  CHECK(cache.get(0,0,0,[&](auto* out){++rebuilds;fill(out);}));CHECK(rebuilds==1);
+  request.reset();CHECK(cache.stats().active_requests==0);
+
+  Cache rows({64000,0,0},3,100,1,{3,0,0});
+  auto progress=rows.register_request(0,0);
+  CHECK(rows.get(0,0,1,fill) && rows.get(0,0,0,fill));
+  progress->complete_row(0,0);
+  CHECK(rows.get(1,0,0,fill) && rows.get(0,0,1,must_hit));
+  CHECK(rows.stats().evicted_needed_rows==0);
+
+  Cache pressure({64000,0,0},3,100,1);
+  auto all=pressure.register_request(0,2);
+  CHECK(pressure.get(0,0,0,fill));CHECK(pressure.get(1,0,0,fill));CHECK(pressure.get(2,0,0,fill));
+  CHECK(pressure.stats().evicted_needed_rows==1 && pressure.stats().evicted_consumers==1);
+  CHECK(pressure.peak_bytes()<=1048576); // Future demand is not an unbounded pin.
+  auto duplicate=pressure.register_request(0,2);
+  CHECK(pressure.get(3,0,0,fill));
+  CHECK(pressure.stats().evicted_needed_rows==2 && pressure.stats().evicted_consumers==3);
+  duplicate.reset();all.reset();CHECK(pressure.stats().active_requests==0);
+  try {auto cancelled=pressure.register_request(9,9);throw std::runtime_error("cancel");}
+  catch(const std::runtime_error&) {}
+  CHECK(pressure.stats().active_requests==0 && pressure.stats().peak_requests==2);
+  rejects([&]{pressure.register_request(-1,0);});rejects([&]{pressure.register_request(0,3);});
+
+  Cache frames({8,8,0},3,2,1,{2,2,0});
+  auto pending=frames.register_request(0,0);
+  CHECK(frames.get(0,0,0,fill) && frames.get(0,1,1,fill) && frames.get(1,0,0,fill));
+  CHECK(frames.get(2,0,0,fill));
+  CHECK(frames.get(0,0,0,must_hit) && frames.get(0,1,1,must_hit));
+  pending->complete_row(0,1);pending->complete_row(1,1);
+  CHECK(frames.get(3,0,0,fill));
+  CHECK(frames.stats().frames==2 && frames.stats().rows==2 && frames.stats().evicted_needed_rows==0);
+}
+
+void staged_registration() {
+  using F=plugin::Filter<Algorithm::FFT3D>;
+  for(int bt:{2,3,4,5}) {
+    F::State state;state.source={32,24,11,{ds::ColorFamily::Gray,ds::SampleFormat::Float32,1,0,0}};
+    FFT3DConfig config;config.bt=bt;config.bw=config.bh=8;config.ow=config.oh=4;config.opt=1;
+    state.temporal_size=bt;state.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},config);
+    const auto& plan=*state.plans[0];
+    state.spectra=std::make_shared<Cache>(std::array<std::size_t,3>{std::size_t(plan.geometry.x.count)*plan.fft.bins(),0,0},
+        bt,10,1,std::array<int,3>{plan.geometry.y.count,0,0});
+    for(int n:{0,5,10}) {
+      {
+        ds::StagedVideoRequest<F> request(n,state);
+        CHECK(!request.advance({&state.source,1},state));
+        const bool edge=n<bt/2 || 10-n<(bt-1)/2;
+        CHECK(request.pending().size()==std::size_t(edge ? 1 : bt));
+        CHECK(state.spectra->stats().active_requests==1); // Registered before any source delivery.
+        {
+          ds::StagedVideoRequest<F> duplicate(n,state);
+          CHECK(!duplicate.advance({&state.source,1},state));
+          CHECK(state.spectra->stats().active_requests==2);
+        }
+        CHECK(state.spectra->stats().active_requests==1);
+      } // Host cancellation before dependency delivery removes its registration.
+      CHECK(state.spectra->stats().active_requests==0);
+    }
+  }
+}
+
 void publication(bool fail) {
   Cache cache({8,0,0},3,1,1);
   std::promise<void> entered,release;auto gate=release.get_future().share();
@@ -105,7 +179,8 @@ template<class T> void reconstruction(SampleFormat format) {
       std::vector<span2d::Plane<const T>> sources;
       for(int j=0;j<slots;++j)sources.emplace_back(input[n-slots/2+j].data(),w,h,w*sizeof(T));
       std::vector<T> result(w*h);
-      plan.process_at<T>({sources.data(),sources.size()},{result.data(),w,h,w*sizeof(T)},n,0,{},cache);
+      auto registration=cache ? cache->register_request(n-slots/2,n-slots/2+slots-1,{true,false,false}) : nullptr;
+      plan.process_at<T>({sources.data(),sources.size()},{result.data(),w,h,w*sizeof(T)},n,0,{},cache,registration.get());
       return result;
     };
     std::array<std::vector<T>,count> expected;
@@ -122,7 +197,7 @@ template<class T> void reconstruction(SampleFormat format) {
         auto c=std::async(std::launch::async,[&]{return render(n-1,&cache);});
         CHECK(a.get()==expected[n] && b.get()==expected[n] && c.get()==expected[n-1]);
       }
-      CHECK(cache.peak_bytes()<=1048576);
+      CHECK(cache.peak_bytes()<=1048576 && cache.stats().active_requests==0);
       if(bt>1 && frames>=3)CHECK(cache.hits()>0 && cache.builds()>0);
     }
     if constexpr(std::is_same_v<T,float>)if(bt==3) {
@@ -131,12 +206,12 @@ template<class T> void reconstruction(SampleFormat format) {
       rejects([&]{render(4,&cache);});
       input[4][0]=saved;
       CHECK(render(4,&cache)==expected[4]);
-      CHECK(cache.peak_bytes()<=1048576);
+      CHECK(cache.peak_bytes()<=1048576 && cache.stats().active_requests==0);
     }
   }
 }
 int main() {try {
-  ownership();publication(false);publication(true);
+  ownership();registered_eviction();staged_registration();publication(false);publication(true);
   reconstruction<std::uint8_t>({8,false,false});
   reconstruction<std::uint16_t>({16,false,true});
   reconstruction<float>({32,true,true});

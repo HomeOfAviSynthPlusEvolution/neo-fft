@@ -133,10 +133,19 @@ struct Filter {
   struct RequestState {
     bool initialized=false, sample=false, ordinary=false;
     int pending=-1;
+    std::unique_ptr<runtime::SpectraCache::Request> spectra;
     runtime::Checkpoints::Lease start;
     std::unique_ptr<runtime::Checkpoint> current;
     int replay_start=0, steps=0;
   };
+  static std::unique_ptr<runtime::SpectraCache::Request> register_spectra(const State& state,int n) {
+    if constexpr(A==Algorithm::FFT3D)if(state.spectra && state.temporal_size>1) {
+      const int bt=state.temporal_size,left=bt/2,right=(bt-1)/2;
+      if(n<left || state.source.num_frames-1-n<right)return state.spectra->register_request(n,n);
+      return state.spectra->register_request(n-left,n+right);
+    }
+    return {};
+  }
   template<class T,class Function> static void with_roi(const ds::PlaneView& view,const ROI& roi,CopyRow copy,Function&& fn) {
     auto s=checked_plane(static_cast<const T*>(view.data),view.width,view.height,view.stride_bytes,
                          plane_extent<T>(view.width,view.height,view.stride_bytes));
@@ -160,7 +169,7 @@ struct Filter {
       if(!state.kalman || n==0) {
         r.ordinary=true;
         if(state.kalman) ctx.request_frame(0,n);
-        else unwrap(request(ctx));
+        else {r.spectra=register_spectra(state,n);unwrap(request(ctx));}
         return ds::Result<Stage>::success(Stage::RequestFrames);
       }
       r.start=state.checkpoints->acquire(n);
@@ -228,7 +237,10 @@ struct Filter {
   }
   static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx,RequestState& r) {
     const auto& state=ctx.state<State>();
-    if(!state.kalman) return process(ctx);
+    if(!state.kalman) {
+      auto registration=std::move(r.spectra);
+      return process(ctx,registration.get());
+    }
     const auto src=unwrap(ctx.frames.get(0,ctx.output_frame));validate_source(src.frame,state);
     require(ctx.dst.format==state.source.format && ctx.dst.plane_count==state.source.format.plane_count,"output format differs");
     const auto* checkpoint=r.current ? r.current.get() : r.start.get();
@@ -300,7 +312,7 @@ struct Filter {
     return ds::Result<ds::VideoRequestResult>::success({});
   }
   template <class T>
-  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi, int frame, int plane_index,span2d::Span<const int> targets={},runtime::SpectraCache* spectra_cache=nullptr) {
+  static void plane(span2d::Span<const ds::PlaneView> src_views, const ds::MutablePlaneView& dst, const Plan* plan, const ROI& roi, int frame, int plane_index,span2d::Span<const int> targets={},runtime::SpectraCache* spectra_cache=nullptr,runtime::SpectraCache::Request* registration=nullptr) {
     const auto de = plane_extent<T>(dst.width, dst.height, dst.stride_bytes);
     auto d = checked_plane(static_cast<T*>(static_cast<void*>(dst.data)), dst.width, dst.height, dst.stride_bytes, de);
 
@@ -340,7 +352,7 @@ struct Filter {
         if (!roi.interlaced) {
           for (auto& source : checked_srcs)
             source = checked_subplane(source,roi.left,roi.top,roi.width,roi.height);
-          plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},checked_subplane(d,roi.left,roi.top,roi.width,roi.height),frame,plane_index,{},spectra_cache);
+          plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},checked_subplane(d,roi.left,roi.top,roi.width,roi.height),frame,plane_index,{},spectra_cache,registration);
           return;
         }
         std::vector<PackedROI<T>> packed;
@@ -349,7 +361,7 @@ struct Filter {
         std::vector<span2d::Plane<const T>> views;
         for (auto& image : packed) views.push_back(image.view);
         PackedROI<T> output(original,roi,plan->copy_row());
-        plan->process_at<T>({views.data(),views.size()},output.view,frame,plane_index,{},spectra_cache);
+        plan->process_at<T>({views.data(),views.size()},output.view,frame,plane_index,{},spectra_cache,registration);
         output.write(d,roi);
       } else plan->process_at<T>({checked_srcs.data(),checked_srcs.size()},d,frame,plane_index,targets);
     } else {
@@ -381,10 +393,12 @@ struct Filter {
     for(int y=0;y<S;++y)
       kernels.decode(source.row_ptr(location.y+y)+location.x,sample_storage<T>,out.data()+std::size_t(y)*S,std::size_t(S),0,scale);
   }
-  static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx) {
+  static ds::Result<ds::VideoProcessResult> process(ds::VideoProcessContext& ctx,runtime::SpectraCache::Request* registration=nullptr) {
     const auto& state = ctx.state<State>();
     const int n = ctx.output_frame;
     const int N = state.source.num_frames;
+    auto local_registration=registration ? nullptr : register_spectra(state,n);
+    if(!registration)registration=local_registration.get();
 
     const bool has_active_plans = std::any_of(state.plans.begin(), state.plans.end(), [](const auto& p) {
       return p != nullptr;
@@ -502,15 +516,15 @@ struct Filter {
       switch (state.source.format.sample_format) {
         case ds::SampleFormat::UInt8:
           plane<std::uint8_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                              state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get());
+                              state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get(),registration);
           break;
         case ds::SampleFormat::Float32:
           plane<float>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                       state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get());
+                       state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get(),registration);
           break;
         default:
           plane<std::uint16_t>(span2d::Span<const ds::PlaneView>(plane_views.data(), plane_views.size()), d,
-                               state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get());
+                               state.plans[p].get(),state.rois[p],n,p,{targets.data(),targets.size()},state.spectra.get(),registration);
           break;
       }
     };

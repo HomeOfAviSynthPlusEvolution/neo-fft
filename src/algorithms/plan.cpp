@@ -329,7 +329,7 @@ void Plan::enhance(std::complex<float>* spectrum) const {
 }
 
 template <class T>
-void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame, int plane, const KalmanState* kalman,span2d::Span<const int> targets,runtime::SpectraCache* cache) const {
+void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane<T> dst, runtime::Workspace& ws, int frame, int plane, const KalmanState* kalman,span2d::Span<const int> targets,runtime::SpectraCache* cache,runtime::SpectraCache::Request* registration) const {
   require(!sources.empty(), "sources must not be empty");
   const auto& gx = geometry.x;
   const auto& gy = geometry.y;
@@ -537,6 +537,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           spatial_.scatter_fft3d_row(r_ptr, wy, a_ptr, gx.cover);
         }
       }
+      if(registration)registration->complete_row(plane,by);
     }
   } else { // DFTTest: transforms are independent; overlap-add commits stay Y then X.
     const std::size_t spatial_samples=mul_size(std::size_t(gx.block),std::size_t(gy.block));
@@ -666,7 +667,7 @@ void Plan::process(span2d::Span<const span2d::Plane<const float>> sources, span2
                    runtime::Workspace& ws) const {
   run(sources, dst, ws);
 }
-template void Plan::run<std::uint8_t>(span2d::Span<const span2d::Plane<const std::uint8_t>>,span2d::Plane<std::uint8_t>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>,runtime::SpectraCache*) const;
-template void Plan::run<std::uint16_t>(span2d::Span<const span2d::Plane<const std::uint16_t>>,span2d::Plane<std::uint16_t>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>,runtime::SpectraCache*) const;
-template void Plan::run<float>(span2d::Span<const span2d::Plane<const float>>,span2d::Plane<float>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>,runtime::SpectraCache*) const;
+template void Plan::run<std::uint8_t>(span2d::Span<const span2d::Plane<const std::uint8_t>>,span2d::Plane<std::uint8_t>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>,runtime::SpectraCache*,runtime::SpectraCache::Request*) const;
+template void Plan::run<std::uint16_t>(span2d::Span<const span2d::Plane<const std::uint16_t>>,span2d::Plane<std::uint16_t>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>,runtime::SpectraCache*,runtime::SpectraCache::Request*) const;
+template void Plan::run<float>(span2d::Span<const span2d::Plane<const float>>,span2d::Plane<float>,runtime::Workspace&,int,int,const KalmanState*,span2d::Span<const int>,runtime::SpectraCache*,runtime::SpectraCache::Request*) const;
 } // namespace neo_fft

@@ -29,11 +29,43 @@ class SpectraCache {
   using Frames=std::map<int,Frame,std::less<int>,ControlAllocator<FrameItem>>;
 public:
   static constexpr int default_mb=128;
+  // Request storage belongs to its host request, not to cached row entries.
+  // The cache must outlive registrations; no host calls occur under its mutex.
+  class Request {
+    friend class SpectraCache;
+    Request(SpectraCache& cache,int first,int last,std::array<bool,3> planes)
+        :cache_(cache),first_(first),last_(last) {
+      for(int p=0;p<3;++p)next_row_[p]=planes[p] ? 0 : cache.rows_[p];
+    }
+  public:
+    Request(const Request&)=delete;
+    Request& operator=(const Request&)=delete;
+    ~Request() {
+      if(!linked_)return;
+      std::lock_guard<std::mutex> lock(cache_.mutex_);
+      if(previous_)previous_->next_=next_;else cache_.requests_=next_;
+      if(next_)next_->previous_=previous_;
+      --cache_.stats_.active_requests;
+    }
+    void complete_row(int plane,int row) {
+      std::lock_guard<std::mutex> lock(cache_.mutex_);
+      next_row_[plane]=row+1;
+    }
+  private:
+    SpectraCache& cache_;
+    int first_,last_;
+    std::array<int,3> next_row_{};
+    bool linked_=false;
+    Request* previous_=nullptr;
+    Request* next_=nullptr;
+  };
   using Lease=std::shared_ptr<const std::complex<float>>;
   struct Stats {
     std::uint64_t requests=0,hits=0,waits=0,builds=0,bypasses=0,evictions=0;
     std::uint64_t requested_bins=0,computed_bins=0;
     std::size_t bytes=0,peak_bytes=0,rows=0,frames=0;
+    std::uint64_t registrations=0,active_requests=0,peak_requests=0;
+    std::uint64_t evicted_needed_rows=0,evicted_consumers=0;
   };
   SpectraCache(std::array<std::size_t,3> bins,int temporal,int frames=-1,int mb=default_mb,
                std::array<int,3> rows={1,1,1})
@@ -46,6 +78,16 @@ public:
       require(rows_[p]>=0 && (!bins_[p] || rows_[p]>0),"invalid spectrum cache shape");
       payload_[p]=mul_size(bins_[p],sizeof(std::complex<float>));
     }
+  }
+  std::unique_ptr<Request> register_request(int first,int last,std::array<bool,3> planes={true,true,true}) {
+    require(first>=0 && last>=first && last-first<temporal_,"invalid cache request interval");
+    if(!budget_ || requested_frames_==0 || temporal_<=1)return {};
+    auto request=std::unique_ptr<Request>(new Request(*this,first,last,planes));
+    std::lock_guard<std::mutex> lock(mutex_);
+    request->next_=requests_;if(requests_)requests_->previous_=request.get();requests_=request.get();
+    request->linked_=true;registered_=true;++stats_.registrations;++stats_.active_requests;
+    stats_.peak_requests=std::max(stats_.peak_requests,stats_.active_requests);
+    return request;
   }
   void inform_threads(int threads) {
     if(threads<=0)return;
@@ -136,26 +178,56 @@ private:
     if(--frame->second.rows==0) {used_-=frame_bytes_;frames_.erase(frame);}
     index_.erase(key);
   }
+  std::uint64_t pending_consumers(const Key& key) const {
+    const auto [frame,plane,row]=key;
+    std::uint64_t count=0;
+    for(auto* request=requests_;request;request=request->next_)
+      if(frame>=request->first_ && frame<=request->last_ && row>=request->next_row_[plane])++count;
+    return count;
+  }
+  void evict(Row* row) {
+    const auto pending=pending_consumers(row->key);
+    stats_.evicted_needed_rows+=pending!=0;stats_.evicted_consumers+=pending;
+    erase(row);++stats_.evictions;
+  }
   bool evict_row() {
-    for(auto* row=first_;row;row=row->next)if(index_.find(row->key)->second.use_count()==1) {
-      erase(row);++stats_.evictions;return true;
+    if(registered_) {
+      // The ordered index prefers earlier source frames within each demand
+      // class. Pending consumers are a soft priority, never an extra pin.
+      Row* needed=nullptr;
+      for(const auto& item:index_)if(item.second.use_count()==1) {
+        auto* row=item.second.get();
+        if(!pending_consumers(row->key)) {evict(row);return true;}
+        if(!needed)needed=row;
+      }
+      if(needed) {evict(needed);return true;}
+    } else {
+      for(auto* row=first_;row;row=row->next)if(index_.find(row->key)->second.use_count()==1) {
+        evict(row);return true;
+      }
     }
     return false;
   }
   bool evict_frame() {
-    auto victim=frames_.end();
+    auto victim=frames_.end();bool victim_needed=true;
     for(auto frame=frames_.begin();frame!=frames_.end();++frame) {
-      if(victim!=frames_.end() && frame->second.age>=victim->second.age)continue;
-      bool pinned=false;
-      for(auto it=index_.lower_bound(Key{frame->first,0,0});it!=index_.end() && std::get<0>(it->first)==frame->first;++it)
+      if(!registered_ && victim!=frames_.end() && frame->second.age>=victim->second.age)continue;
+      bool pinned=false,needed=false;
+      for(auto it=index_.lower_bound(Key{frame->first,0,0});it!=index_.end() && std::get<0>(it->first)==frame->first;++it) {
         if(it->second.use_count()!=1) {pinned=true;break;}
-      if(!pinned)victim=frame;
+        if(registered_ && pending_consumers(it->first))needed=true;
+      }
+      if(pinned)continue;
+      if(!registered_ || victim==frames_.end() || (victim_needed && !needed)) {
+        victim=frame;victim_needed=needed;
+      }
+      if(registered_ && !needed)break;
     }
     if(victim==frames_.end())return false;
     const int number=victim->first;
     auto it=index_.lower_bound(Key{number,0,0});
     while(it!=index_.end() && std::get<0>(it->first)==number) {
-      auto* row=(it++)->second.get();erase(row);++stats_.evictions;
+      auto* row=(it++)->second.get();evict(row);
     }
     return true;
   }
@@ -172,6 +244,8 @@ private:
   mutable std::mutex mutex_;
   Index index_;
   Frames frames_;
+  Request* requests_=nullptr;
+  bool registered_=false;
   Row* first_=nullptr;
   Row* last_=nullptr;
 };
