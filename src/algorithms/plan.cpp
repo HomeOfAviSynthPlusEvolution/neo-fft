@@ -395,28 +395,15 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   if (enhancement_params_.enhancement.active()) validate_spectral_shape(enhancement_params_, fft.bins());
   if (kalman) require(kalman->last.size()==state_bins(),"Kalman checkpoint shape differs");
   ws.reset();
-  std::array<runtime::SpectraCache::Lease,5> cached;
-  for (int j = 0; j < T_slots; ++j) {
-    if (!preview_ && !kalman && !temporal_ola_) {
-      if (algorithm == Algorithm::FFT3D) {
-        if(cache && temporal_size>1) {
-          cached[j]=cache->get(frame-T_slots/2+j,plane,[&](std::complex<float>* spectra) {
-            pad_fft3d_source(sources[j],ws.padded(j),geometry,format,model_);
-            for(int by=0;by<gy.count;++by)for(int bx=0;bx<gx.count;++bx) {
-              for(int y=0;y<gy.block;++y)
-                spatial_.gather_fft3d(ws.padded(j).row_ptr(by*gy.step+y)+bx*gx.step,
-                    wx_.analysis.data(),wy_.analysis[y],ws.block().data()+y*gx.block,gx.block);
-              auto* out=spectra+(std::size_t(by)*gx.count+bx)*fft.bins();
-              fft.forward(ws.block().data(),out);
-              spatial_.validate_finite(reinterpret_cast<const float*>(out),2*fft.bins());
-            }
-          });
-        }
-        if(!cached[j])pad_fft3d_source(sources[j], ws.padded(j), geometry, format, model_);
-      }
-      else pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
+  std::array<bool,5> padded{};
+  const auto ensure_padded=[&](int j) {
+    if(!padded[j]) {
+      pad_fft3d_source(sources[j],ws.padded(j),geometry,format,model_);
+      padded[j]=true;
     }
-  }
+  };
+  if(algorithm==Algorithm::DFTTest && !temporal_ola_)
+    for(int j=0;j<T_slots;++j)pad_source(sources[j],ws.padded(j),geometry,format,algorithm);
 
   auto accum = ws.accum();
   auto row = algorithm == Algorithm::FFT3D ? ws.row() : span2d::Plane<float>{};
@@ -448,6 +435,23 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
 
     for (int by = 0; by < gy.count; ++by) {
       const int oy = by * gy.step;
+      std::array<runtime::SpectraCache::Lease,5> cached;
+      if(!kalman)for(int j=0;j<T_slots;++j) {
+        if(cache && temporal_size>1) {
+          cached[j]=cache->get(frame-T_slots/2+j,plane,by,[&](std::complex<float>* spectra) {
+            ensure_padded(j);
+            for(int bx=0;bx<gx.count;++bx) {
+              for(int y=0;y<gy.block;++y)
+                spatial_.gather_fft3d(ws.padded(j).row_ptr(oy+y)+bx*gx.step,
+                    wx_a,wy_.analysis[y],ws.block().data()+y*gx.block,gx.block);
+              auto* out=spectra+std::size_t(bx)*spatial_bins;
+              fft.forward(ws.block().data(),out);
+              spatial_.validate_finite(reinterpret_cast<const float*>(out),2*spatial_bins);
+            }
+          });
+        }
+        if(!cached[j])ensure_padded(j);
+      }
       if (!row.empty())
         std::memset(row.data(), 0,
                     static_cast<std::size_t>(row.stride_bytes()) * static_cast<std::size_t>(row.height()));
@@ -458,7 +462,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
         if (T_slots == 1) {
           float* blk = ws.block(0).data();
           if (cached[0]) {
-            std::copy_n(cached[0].get()+(std::size_t(by)*gx.count+bx_start)*spatial_bins,spatial_bins,ws.spectrum().data());
+            std::copy_n(cached[0].get()+std::size_t(bx_start)*spatial_bins,spatial_bins,ws.spectrum().data());
           } else if (!kalman) {
           for (int y = 0; y < gy.block; ++y) {
             const float* src_row = ws.padded(0).row_ptr(oy + y) + ox;
@@ -492,7 +496,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
           const std::complex<float>* spectra_ptrs[5];
           for (int j = 0; j < T_slots; ++j) {
             if(cached[j]) {
-              spectra_ptrs[j]=cached[j].get()+(std::size_t(by)*gx.count+bx_start)*spatial_bins;
+              spectra_ptrs[j]=cached[j].get()+std::size_t(bx_start)*spatial_bins;
               continue;
             }
             float* blk = ws.block(0).data();

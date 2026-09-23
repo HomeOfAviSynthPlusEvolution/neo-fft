@@ -103,10 +103,12 @@ struct Filter {
     if constexpr (A == Algorithm::FFT3D) {
       state.pattern_frame = std::clamp(config.pframe, 0, info.num_frames-1);
       std::array<std::size_t,3> bins{};
+      std::array<int,3> rows{};
       for(int p=0;p<f.plane_count;++p)if(const auto& plan=state.plans[p]) {
-        bins[p]=mul_size(mul_size(plan->geometry.x.count,plan->geometry.y.count),plan->fft.bins());
+        bins[p]=mul_size(plan->geometry.x.count,plan->fft.bins());
+        rows[p]=plan->geometry.y.count;
       }
-      if(config.bt>1)state.spectra=std::make_shared<runtime::SpectraCache>(bins,config.bt,config.cache_frames,config.cache_mb);
+      if(config.bt>1)state.spectra=std::make_shared<runtime::SpectraCache>(bins,config.bt,config.cache_frames,config.cache_mb,rows);
       for (const auto& plan : state.plans) if (plan) {
         if (plan->preview()) state.temporal_size = 1;
         state.sampled = state.sampled || plan->needs_pattern_frame();
