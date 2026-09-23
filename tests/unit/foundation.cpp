@@ -490,6 +490,8 @@ int main() {
       for(auto profile:{FftProfile::scalar,FftProfile::sse2,FftProfile::avx2,FftProfile::avx512,FftProfile::native}) {
         if(!fft_profile_supported(profile))continue;
         RealFFT3D transform(T,S,S,profile);
+        CHECK(!transform.try_inverse_center(nullptr,0,0,nullptr,0));
+        CHECK(!transform.try_inverse_center(nullptr,1,0,nullptr,0));
         for(int count:{0,1,2,7,8,9}) {
           std::vector<float> back(rd*10,-92);
           const std::complex<float> sentinel{-93,94};
@@ -509,6 +511,28 @@ int main() {
           for(int b=0;b<10;++b) {
             for(std::size_t i=b<count ? samples : 0;i<rd;++i)CHECK(back[b*rd+i]==-92);
             for(std::size_t i=b<count ? bins : 0;i<sd;++i)CHECK(spectrum[b*sd+i]==sentinel);
+          }
+          // Independent binary64 forward spectra test selective inverse sign,
+          // center index and scale; non-target slices and inactive volumes are guards.
+          for(int b=0;b<count;++b) {
+            const auto& oracle=b%2 ? oracle1 : oracle0;
+            for(std::size_t i=0;i<bins;++i)spectrum[b*sd+i]=std::complex<float>(oracle[i]);
+          }
+          const auto saved_spectrum=spectrum;
+          const auto center=std::size_t(T/2)*S*S;
+          std::vector<float> selected(rd*10+2,-96);
+          const bool used=transform.try_inverse_center(spectrum.data(),count,sd,selected.data()+1+center,rd);
+          CHECK(spectrum==saved_spectrum);
+#if defined(NEO_FFT_HAS_AVX2_CODELET)
+          if(S==16 && count>1 && transform.lanes()>1 &&
+             (profile==FftProfile::avx2 || profile==FftProfile::avx512))CHECK(used);
+#endif
+          if(count<=1 || S!=16 || profile==FftProfile::scalar || profile==FftProfile::sse2)CHECK(!used);
+          CHECK(selected.front()==-96 && selected.back()==-96);
+          for(int b=0;b<10;++b)for(std::size_t i=0;i<rd;++i) {
+            if(used && b<count && i>=center && i<center+S*S)
+              check_near(selected[1+b*rd+i],input[b*rd+i],2e-6);
+            else CHECK(selected[1+b*rd+i]==-96);
           }
         }
       }

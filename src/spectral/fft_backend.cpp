@@ -454,6 +454,45 @@ void dense_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_d
   }
 }
 
+#if defined(NEO_FFT_HAS_AVX2_CODELET)
+template<int N,class V>
+pf::detail::cmplx<V> temporal_inverse_center(const pf::detail::cmplx<V>* v) {
+  // Preserve the full inverse butterfly's operation order for output N/2.
+  if constexpr(N==3) {
+    const auto sum=v[1]+v[2],difference=v[1]-v[2];
+    const auto center=v[0]-sum*0.5f;
+    const auto side=difference*0.86602540378443864676f;
+    return center+pf::detail::cmplx<V>{-side.i,side.r};
+  } else {
+    static_assert(N==5);
+    const auto a=v[1]+v[4],b=v[2]+v[3],c=v[1]-v[4],d=v[2]-v[3];
+    const auto base=(v[0]-a*0.80901699437494742410f)+b*0.30901699437494742410f;
+    const auto side=c*0.58778525229247312917f-d*0.95105651629515357212f;
+    return base+pf::detail::cmplx<V>{-side.i,side.r};
+  }
+}
+
+template<int N>
+void inverse_center_spectra(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
+                            std::complex<float>* out) {
+  namespace pd=pf::detail;
+  constexpr auto lanes=pd::VLEN<float>::val;
+  using Vec=pd::vtype_t<float>;
+  constexpr std::size_t bins=16*9;
+  static_assert(bins%lanes==0);
+  for(std::size_t b=0;b<batch;++b) for(std::size_t k=0;k<bins;k+=lanes) {
+    pd::cmplx<Vec> values[N];
+    for(int n=0;n<N;++n) for(std::size_t lane=0;lane<lanes;++lane) {
+      const auto v=in[b*in_dist+n*bins+k+lane];
+      values[n].r[lane]=v.real();values[n].i[lane]=v.imag();
+    }
+    const auto result=temporal_inverse_center<N>(values);
+    for(std::size_t lane=0;lane<lanes;++lane)
+      out[b*bins+k+lane]={result.r[lane],result.i[lane]};
+  }
+}
+#endif
+
 template<int T,int S>
 void dense_axes(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
                 std::complex<float>* out,std::size_t out_dist,bool forward,bool spatial) {
@@ -549,11 +588,30 @@ void batch_c2r_3d(std::size_t batch, int depth, int height, int width, const std
 #endif
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
+
+bool try_c2r_3d_center(std::size_t batch,int depth,int height,int width,
+                        const std::complex<float>* in,std::size_t in_dist,
+                        float* out,std::size_t out_dist,float fct) {
+#if defined(NEO_FFT_HAS_AVX2_CODELET) && !defined(POCKETFFT_NO_VECTORS)
+  if(batch>1 && (depth==3 || depth==5) && height==16 && width==16) {
+    ScratchScope scope;
+    pf::detail::arr<std::complex<float>> center(mul_size(batch,std::size_t(144)));
+    if(depth==3)inverse_center_spectra<3>(batch,in,in_dist,center.data());
+    else inverse_center_spectra<5>(batch,in,in_dist,center.data());
+    codelet::batch_fft16x16_c2r(batch,center.data(),144,9,out,out_dist,16,fct);
+    return true;
+  }
+#else
+  (void)batch;(void)depth;(void)height;(void)width;(void)in;(void)in_dist;
+  (void)out;(void)out_dist;(void)fct;
+#endif
+  return false;
+}
 } // namespace
 
 const FftBackend& BACKEND_FN() noexcept {
   static const FftBackend backend{int(pf::detail::VLEN<float>::val), BACKEND_NAME, r2c, c2r, batch_r2c, batch_c2r,
-                                  r2c_3d, c2r_3d, batch_r2c_3d, batch_c2r_3d};
+                                  r2c_3d, c2r_3d, batch_r2c_3d, batch_c2r_3d, try_c2r_3d_center};
   return backend;
 }
 

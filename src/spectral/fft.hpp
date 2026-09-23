@@ -50,6 +50,10 @@ public:
                std::complex<float>* out, std::size_t out_dist) const;
   void inverse(const std::complex<float>* in, std::size_t batch, std::size_t in_dist,
                float* out, std::size_t out_dist) const;
+  // Write only one H*W center plane per volume, starting at out + b*out_dist.
+  // Unsupported shapes/profiles/group sizes return false without accessing buffers.
+  bool try_inverse_center(const std::complex<float>* in, std::size_t batch, std::size_t in_dist,
+                          float* out, std::size_t out_dist) const;
 
 private:
   int depth_, height_, width_;
