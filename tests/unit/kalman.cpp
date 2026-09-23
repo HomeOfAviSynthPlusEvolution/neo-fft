@@ -59,25 +59,26 @@ std::vector<float> run(Filter::State& s,int n,Trace& trace,int fail_source=-1,bo
 int main() {try {
   using Z=std::complex<float>;
   for(std::size_t count:{1u,2u,3u,7u,17u,33u,65u}) {
-    std::vector<Z> x(count+2,{1,0}),l(count+2),c(count+2,{2,2}),q=c;
+    std::vector<Z> x(count+2,{1,0}),l(count+2);
+    std::vector<float> c(count+2,2),q=c;
     l.front()=l.back()={99,99};
     kalman_scalar(x.data()+1,l.data()+1,c.data()+1,q.data()+1,nullptr,2,4,count);
     CHECK(l.front()==Z(99,99) && l.back()==Z(99,99));
     for(std::size_t i=1;i<=count;++i) CHECK(l[i]==Z(4.f/6.f,0));
   }
-  {Z x{2,0},l{},c{2,3},q{2,4};
+  {Z x{2,0},l{};float c=2,q=2;
     kalman_scalar(&x,&l,&c,&q,nullptr,1,4,1);CHECK(l.real()!=2); // equality smooths
-    x={0,3};l={0,0};c=q={2,4};kalman_scalar(&x,&l,&c,&q,nullptr,1,4,1);
-    CHECK(l==x && c==Z(1,1) && q==c); // imaginary-only motion resets both
-    x={0,0};l={0,0};c=q={0,0};kalman_scalar(&x,&l,&c,&q,nullptr,0,4,1);CHECK(l==x && c==Z());
-    x={1e30f,0};l={-1e30f,0};c=q={2,2};kalman_scalar(&x,&l,&c,&q,nullptr,2,4,1);CHECK(l==x);
-    x={0,0};l={0,0};c=q={2e38f,2e38f};rejects([&]{kalman_scalar(&x,&l,&c,&q,nullptr,1,4,1);});
+    x={0,3};l={0,0};c=q=2;kalman_scalar(&x,&l,&c,&q,nullptr,1,4,1);
+    CHECK(l==x && c==1 && q==c); // imaginary-only motion resets both
+    x={0,0};l={0,0};c=q=0;kalman_scalar(&x,&l,&c,&q,nullptr,0,4,1);CHECK(l==x && c==0);
+    x={1e30f,0};l={-1e30f,0};c=q=2;kalman_scalar(&x,&l,&c,&q,nullptr,2,4,1);CHECK(l==x);
+    x={0,0};l={0,0};c=q=2e38f;rejects([&]{kalman_scalar(&x,&l,&c,&q,nullptr,1,4,1);});
     x={NAN,0};rejects([&]{kalman_scalar(&x,&l,&c,&q,nullptr,0,4,1);});
   }
   {
     FFT3DConfig c;c.bt=0;c.bw=c.bh=8;c.opt=1;c.sigma=12;c.pfactor=.7f;c.px=c.py=2;
     Plan patterned(32,24,{8,false,false},c);auto initial=patterned.initial_kalman();
-    CHECK(initial.last[0]==Z() && initial.covariance[0]==Z(12.f*12.f*64.f,12.f*12.f*64.f));
+    CHECK(initial.last[0]==Z() && initial.covariance[0]==12.f*12.f*64.f);
     c.pfactor=0;c.enhancement.sharpen=.5f;Plan enhanced(32,24,{32,true,false},c);
     c.enhancement.sharpen=0;Plan plain(32,24,{32,true,false},c);
     auto a=enhanced.initial_kalman(),b=plain.initial_kalman();std::vector<float> samples(32*24,.25f),out(samples.size());
@@ -133,6 +134,21 @@ int main() {try {
     runtime::Checkpoints hard(budget);hard.publish(large(1));CHECK(!hard.acquire(1));
     runtime::Checkpoints zero(0);auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=1;
     zero.publish(std::move(cp));CHECK(!zero.acquire(1));
+  }
+  { // Account for mixed element sizes and reserved (not only live) storage.
+    KalmanState s;s.last.reserve(11);s.covariance.reserve(17);s.process.reserve(19);
+    CHECK(s.bytes()==sizeof(s)+s.last.capacity()*sizeof(Z)+
+        (s.covariance.capacity()+s.process.capacity())*sizeof(float));
+    FFT3DConfig c;c.bt=0;c.bw=c.bh=32;c.ow=c.oh=16;c.opt=1;
+    auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=1;std::size_t payload=0;
+    for(int p=0;p<3;++p) {
+      Plan plan(p ? 640:1280,p ? 360:720,{8,false,false},c);
+      cp->planes[p]=plan.initial_kalman();
+      payload+=cp->planes[p].last.size()*16;
+    }
+    CHECK(payload==49560576); // 47.265 MiB for 720p YUV420, formerly 70.897 MiB.
+    runtime::Checkpoints hard(64*1024*1024);hard.publish(std::move(cp));
+    CHECK(hard.acquire(1) && hard.bytes()<=64*1024*1024);
   }
   std::cout<<"Kalman scalar, canonical replay/cache/failures, exact checkpoint, source-owner bound and INT_MAX passed\n";
   return 0;

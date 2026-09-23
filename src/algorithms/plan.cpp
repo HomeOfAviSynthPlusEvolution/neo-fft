@@ -292,8 +292,8 @@ std::size_t Plan::state_bins() const {
 KalmanState Plan::initial_kalman() const {
   require(kalman_,"not a Kalman plan");
   const auto count=state_bins();
-  KalmanState state{buffer<std::complex<float>>(count),buffer<std::complex<float>>(count),buffer<std::complex<float>>(count)};
-  std::fill(state.covariance.begin(),state.covariance.end(),std::complex<float>(kalman_r0_,kalman_r0_));
+  KalmanState state{buffer<std::complex<float>>(count),buffer<float>(count),buffer<float>(count)};
+  std::fill(state.covariance.begin(),state.covariance.end(),kalman_r0_);
   state.process=state.covariance;
   return state;
 }

@@ -3,6 +3,7 @@
 #include "kernels/dither.hpp"
 #include "kernels/spatial.hpp"
 #include "../guard.hpp"
+#include "kalman_reference.hpp"
 #include <cstring>
 #include <algorithm>
 #ifdef NEO_FFT_TEST_HIGHWAY
@@ -10,6 +11,13 @@
 #endif
 using namespace neo_fft;
 using Z=std::complex<float>;
+void check_shared(const float* actual,const Z* expanded,std::size_t n) {
+  for(std::size_t i=0;i<n;++i) {
+    const float re=expanded[i].real(),im=expanded[i].imag();
+    CHECK(std::memcmp(actual+i,&re,sizeof(float))==0);
+    CHECK(std::memcmp(actual+i,&im,sizeof(float))==0);
+  }
+}
 void run_tests() {
   const auto kernel=select_kalman(0);const auto noise=select_dither_noise(0);const auto copy=select_copy_row(0);
   kernel(nullptr,nullptr,nullptr,nullptr,nullptr,0,0,0);noise(nullptr,0,0,0,0,0,0);copy(nullptr,nullptr,0);
@@ -22,19 +30,24 @@ void run_tests() {
       dither_noise_scalar(expected.data,n,seed,2147483646u,2,107,0);
       CHECK(std::memcmp(random.data,expected.data,n*sizeof(float))==0);
     }
-    Guard<Z> x(n),a(n),b(n),ac(n),bc(n),aq(n),bq(n);
+    Guard<Z> x(n),a(n),b(n),old(n),oc(n),oq(n);
+    Guard<float> ac(n),bc(n),aq(n),bq(n);
     for(bool table:{false,true}) for(float uniform:{0.f,1.f,2.f}) for(float ratio:{0.f,4.f,100.f}) {
       for(std::size_t i=0;i<n;++i) {
         x.data[i]={float(int(i%7)-3)*.37f,float(int(i%13)-6)*.17f};
-        a.data[i]=b.data[i]={float(i%3)*.2f,float(i%5)*.1f};
-        ac.data[i]=bc.data[i]={2.f+float(i%4),3.f};aq.data[i]=bq.data[i]={1.f,4.f};
+        a.data[i]=b.data[i]=old.data[i]={float(i%3)*.2f,float(i%5)*.1f};
+        ac.data[i]=bc.data[i]=2.f+float(i%4);aq.data[i]=bq.data[i]=1.f;
+        oc.data[i]={ac.data[i],ac.data[i]};oq.data[i]={aq.data[i],aq.data[i]};
         pattern.data[i]=float(i%5)*.25f;
       }
       for(int iteration=0;iteration<3;++iteration) {
         kernel(x.data,a.data,ac.data,aq.data,table ? pattern.data:nullptr,uniform,ratio,n);
         kalman_scalar(x.data,b.data,bc.data,bq.data,table ? pattern.data:nullptr,uniform,ratio,n);
+        kalman_reference::kalman_scalar(x.data,old.data,oc.data,oq.data,table ? pattern.data:nullptr,uniform,ratio,n);
         CHECK(std::memcmp(a.data,b.data,n*sizeof(Z))==0);
-        CHECK(std::memcmp(ac.data,bc.data,n*sizeof(Z))==0 && std::memcmp(aq.data,bq.data,n*sizeof(Z))==0);
+        CHECK(std::memcmp(ac.data,bc.data,n*sizeof(float))==0 && std::memcmp(aq.data,bq.data,n*sizeof(float))==0);
+        CHECK(std::memcmp(a.data,old.data,n*sizeof(Z))==0);
+        check_shared(ac.data,oc.data,n);check_shared(aq.data,oq.data,n);
       }
     }
   }
@@ -42,8 +55,9 @@ void run_tests() {
   // component after every step, including values adjacent to the strict threshold.
   for(int signal=0;signal<4;++signal) {
     constexpr int n=33;
-    Guard<Z> x(n),l(n),c(n),q(n),sl(n),sc(n),sq(n);
-    std::fill_n(c.data,n,Z(1,1));std::fill_n(q.data,n,Z(1,1));
+    Guard<Z> x(n),l(n),sl(n),sc(n),sq(n);
+    Guard<float> c(n),q(n);
+    std::fill_n(c.data,n,1.f);std::fill_n(q.data,n,1.f);
     std::fill_n(sc.data,n,Z(1,1));std::fill_n(sq.data,n,Z(1,1));
     for(int frame=0;frame<512;++frame) {
       for(int i=0;i<n;++i) {
@@ -57,19 +71,19 @@ void run_tests() {
         x.data[i]={v,signal==2 ? 0.f : v*.5f};
       }
       kernel(x.data,l.data,c.data,q.data,nullptr,1,4,n);
-      kalman_scalar(x.data,sl.data,sc.data,sq.data,nullptr,1,4,n);
+      kalman_reference::kalman_scalar(x.data,sl.data,sc.data,sq.data,nullptr,1,4,n);
       CHECK(std::memcmp(l.data,sl.data,n*sizeof(Z))==0);
-      CHECK(std::memcmp(c.data,sc.data,n*sizeof(Z))==0 && std::memcmp(q.data,sq.data,n*sizeof(Z))==0);
+      check_shared(c.data,sc.data,n);check_shared(q.data,sq.data,n);
     }
   }
   for(auto kernel:{select_kalman(0),select_kalman(1)}) {
-    const int n=33;Z x[n],l[n],c[n],q[n];float pattern[n];
+    const int n=33;Z x[n],l[n];float c[n],q[n],pattern[n];
     for(int bad=0;bad<n;++bad) {
-      std::fill_n(x,n,Z(1e30f,0));std::fill_n(l,n,Z(-1e30f,0));std::fill_n(c,n,Z(3e38f,3e38f));std::copy_n(c,n,q);
+      std::fill_n(x,n,Z(1e30f,0));std::fill_n(l,n,Z(-1e30f,0));std::fill_n(c,n,3e38f);std::copy_n(c,n,q);
       kernel(x,l,c,q,nullptr,1,4,n); // Inactive covariance overflow is allowed on reset.
-      std::fill_n(x,n,Z());std::fill_n(l,n,Z());std::fill_n(c,n,Z(1,1));std::fill_n(q,n,Z(1,1));
-      c[bad]=q[bad]=Z(3e38f,3e38f);rejects([&]{kernel(x,l,c,q,nullptr,1,4,n);});
-      std::fill_n(c,n,Z(1,1));std::fill_n(q,n,Z(1,1));x[bad]={NAN,0};
+      std::fill_n(x,n,Z());std::fill_n(l,n,Z());std::fill_n(c,n,1.f);std::fill_n(q,n,1.f);
+      c[bad]=q[bad]=3e38f;rejects([&]{kernel(x,l,c,q,nullptr,1,4,n);});
+      std::fill_n(c,n,1.f);std::fill_n(q,n,1.f);x[bad]={NAN,0};
       rejects([&]{kernel(x,l,c,q,nullptr,0,4,n);});x[bad]={0,0};std::fill_n(pattern,n,1.f);pattern[bad]=NAN;
       rejects([&]{kernel(x,l,c,q,pattern,1,4,n);});
     }
