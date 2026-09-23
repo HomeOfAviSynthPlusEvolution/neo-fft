@@ -388,15 +388,42 @@ void c2r_3d(int depth, int height, int width, const std::complex<float>* in, flo
 }
 
 // Dense small-volume C2C axes avoid the general multidimensional iterator.
-// Keep PocketFFT's butterflies and axis order: width real FFT, time, height.
+// Use explicit temporal butterflies and PocketFFT spatial butterflies.
+// The generic spatial path keeps width real FFT, time, height axis order.
 #ifndef POCKETFFT_NO_VECTORS
+template<int N,class V>
+void temporal_butterfly(pf::detail::cmplx<V>* v,bool forward) {
+  const auto rotate=[&](pf::detail::cmplx<V> z) {
+    return forward ? pf::detail::cmplx<V>{z.i,-z.r} : pf::detail::cmplx<V>{-z.i,z.r};
+  };
+  if constexpr(N==3) {
+    const auto sum=v[1]+v[2],difference=v[1]-v[2];
+    const auto center=v[0]-sum*0.5f;
+    const auto side=rotate(difference*0.86602540378443864676f);
+    v[0]=v[0]+sum;v[1]=center+side;v[2]=center-side;
+  } else {
+    static_assert(N==5);
+    const auto a=v[1]+v[4],b=v[2]+v[3],c=v[1]-v[4],d=v[2]-v[3];
+    const auto base1=(v[0]+a*0.30901699437494742410f)-b*0.80901699437494742410f;
+    const auto base2=(v[0]-a*0.80901699437494742410f)+b*0.30901699437494742410f;
+    const auto side1=rotate(c*0.95105651629515357212f+d*0.58778525229247312917f);
+    const auto side2=rotate(c*0.58778525229247312917f-d*0.95105651629515357212f);
+    v[0]=(v[0]+a)+b;v[1]=base1+side1;v[4]=base1-side1;v[2]=base2+side2;v[3]=base2-side2;
+  }
+}
+
 template<int N,int Inner,int Outer>
 void dense_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
                 std::complex<float>* out,std::size_t out_dist,bool forward) {
   namespace pd=pf::detail;
   constexpr auto lanes=pd::VLEN<float>::val;
   using Vec=pd::vtype_t<float>;
-  const auto plan=pd::get_plan<pd::pocketfft_c<float>>(N);
+  std::shared_ptr<pd::pocketfft_c<float>> plan;
+  if constexpr(N!=3 && N!=5)plan=pd::get_plan<pd::pocketfft_c<float>>(N);
+  const auto execute=[&](auto* values) {
+    if constexpr(N==3 || N==5)temporal_butterfly<N>(values,forward);
+    else plan->exec(values,1.0f,forward);
+  };
   const auto lines=batch*Outer*Inner;
   std::size_t line=0;
   for(;lines-line>=lanes;line+=lanes) {
@@ -411,7 +438,7 @@ void dense_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_d
       const auto v=in[src[lane]+n*Inner];
       values[n].r[lane]=v.real();values[n].i[lane]=v.imag();
     }
-    plan->exec(values,1.0f,forward);
+    execute(values);
     for(int n=0;n<N;++n)for(std::size_t lane=0;lane<lanes;++lane)
       out[dst[lane]+n*Inner]={values[n].r[lane],values[n].i[lane]};
   }
@@ -422,7 +449,7 @@ void dense_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_d
     for(int n=0;n<N;++n) {
       const auto v=in[b*in_dist+offset+n*Inner];values[n].Set(v.real(),v.imag());
     }
-    plan->exec(values,1.0f,forward);
+    execute(values);
     for(int n=0;n<N;++n)out[b*out_dist+offset+n*Inner]={values[n].r,values[n].i};
   }
 }
