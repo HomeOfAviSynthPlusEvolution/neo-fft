@@ -4,7 +4,7 @@ Specification: F3D-KALMAN-004. Applies only to effective bt=0, n>0. Windows, spa
 
 ## State and initialization
 
-For each selected plane, each spatial block in canonical Y-then-X order, and each logical spatial half-spectrum bin, retain complex L (last estimate), C (covariance) and Q (process covariance). Real/imaginary C,Q are separate scalar quantities, not complex arithmetic. Padding is not a state bin. No temporal FFT is used.
+For each selected plane, each spatial block in canonical Y-then-X order, and each logical spatial half-spectrum bin, retain complex L (last estimate) and the logical real/imaginary components of C (covariance) and Q (process covariance). C,Q use scalar arithmetic, not complex arithmetic; their equal real/imaginary components may share storage as specified below. Padding is not a state bin. No temporal FFT is used.
 
 Let `norm=1.0f/(float(bw)*float(bh))`, the phase-1 inverse spatial transform volume. Uniform noise power is `R0=(sigma_eff*sigma_eff)/norm`; do not replace transform volume with window energy. Use the inherited format scaling and preserve this binary32 operation order. Virtual state S0 is:
 
@@ -56,4 +56,6 @@ At the requested n copy L_n to a private output spectrum, apply inherited sharpe
 
 Example oracle: R0=R=2, kratio=2, X1=(1,0). No motion; initial sum=4, gain=4/6, so L1.re=2/3, Q1.re=(4/6)^2*2 and C1.re=(1-4/6)*4 with binary32 rounding. With X1=(3,0), 9>8 resets both components to L1=(3,0), C1=Q1=(2,2). These distinguish zero initialization, component-wise reset and a mistaken seed from frame 0.
 
-An implementation may vectorize independent bins/blocks/planes. It may not parallelize dependent time steps, merge covariance components, feed enhancement back or replace early history with an arbitrary fresh state. Same-build checkpoint restore must retain exact binary32 state, not compressed, quantized or reconstructed state.
+Canonical reachable states have bit-identical C.re and C.im, and bit-identical Q.re and Q.im: S0 initializes each pair equally; a common reset assigns the same R to both; smoothing applies the same ordered binary32 operations to equal old C,Q and the same R, independently of X and L. The zero-noise identity also preserves this invariant. Thus each bin may store one binary32 C and one binary32 Q, with one shared sum/gain calculation and separate real/imaginary L updates. C and Q remain distinct values; never merge them with each other or merge different bins. This lossless representation preserves the exact logical state, including signed-zero bits. It does not represent arbitrary unequal covariance-component states; such states are outside this canonical representation and must not be silently collapsed.
+
+An implementation may vectorize independent bins/blocks/planes. It may not parallelize dependent time steps, feed enhancement back or replace early history with an arbitrary fresh state. Same-build checkpoint restore must retain exact binary32 L,C,Q values. Sharing the proven equal components is permitted; quantization, lossy compression or reconstructing state from output pixels is not. The shown operation order, active finite checks and failure rollback remain unchanged. Verify the shared representation against an independent expanded-component recurrence initialized from S0, through smoothing, either-component resets and zero-noise steps.
