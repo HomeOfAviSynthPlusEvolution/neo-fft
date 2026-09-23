@@ -92,6 +92,7 @@ int main() {try {
     auto canonical=state(config,0);std::array<std::vector<float>,13> expected;
     for(int n=0;n<13;++n) {Trace trace;expected[n]=run(canonical,n,trace);CHECK(trace.peak==1);}
     auto cached=state(config);
+    cached.checkpoints=std::make_shared<runtime::Checkpoints>();
     for(int n:{8,2,12,4,8,6,1,11,3,12}) {Trace trace;auto result=run(cached,n,trace);CHECK(result==expected[n]);}
     auto concurrent=state(config);
     std::vector<std::future<std::vector<float>>> jobs;
@@ -113,6 +114,25 @@ int main() {try {
     auto lease=cache.acquire(1);
     for(int n=2;n<=6;++n){auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=n;cache.publish(std::move(cp));}
     CHECK(lease->frame==1);CHECK(!cache.acquire(1));CHECK(cache.bytes()<=64*1024*1024);
+  }
+  { // Cache admission uses actual capacity, including ownership/cache metadata.
+    constexpr std::size_t budget=64*1024*1024;
+    auto large=[](int frame) {
+      auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=frame;
+      cp->planes[0].last.reserve(budget/sizeof(Z));
+      return cp;
+    };
+    runtime::Checkpoints cache;
+    cache.publish(large(1));auto lease=cache.acquire(1);
+    CHECK(lease && cache.bytes()==sizeof(cache)+lease->bytes());
+    CHECK(cache.bytes()>budget);
+    cache.publish(large(2));auto next=cache.acquire(2);
+    CHECK(next && next->frame==2 && !cache.acquire(1));
+    CHECK(cache.bytes()==sizeof(cache)+next->bytes()); // Exactly one oversized state.
+    CHECK(lease->frame==1); // Eviction cannot invalidate an in-flight request.
+    runtime::Checkpoints hard(budget);hard.publish(large(1));CHECK(!hard.acquire(1));
+    runtime::Checkpoints zero(0);auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=1;
+    zero.publish(std::move(cp));CHECK(!zero.acquire(1));
   }
   std::cout<<"Kalman scalar, canonical replay/cache/failures, exact checkpoint, source-owner bound and INT_MAX passed\n";
   return 0;

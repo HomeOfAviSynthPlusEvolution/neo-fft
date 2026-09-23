@@ -32,7 +32,8 @@ template<class T> struct ControlAllocator {
 class Checkpoints {
 public:
   using Lease=std::shared_ptr<const Checkpoint>;
-  explicit Checkpoints(std::size_t budget=64*1024*1024):budget_(budget) {}
+  Checkpoints():budget_(64*1024*1024),retain_one_(true) {}
+  explicit Checkpoints(std::size_t budget):budget_(budget),retain_one_(false) {}
   Lease acquire(int frame) {
     std::lock_guard<std::mutex> lock(mutex_);
     Entry* best=nullptr;
@@ -45,10 +46,14 @@ public:
     auto* raw=owned.release();
     Lease value(raw,std::default_delete<Checkpoint>{},ControlAllocator<Checkpoint>(&raw->control_bytes));
     const auto bytes=value->bytes();
-    if(bytes>budget_ || sizeof(*this)>budget_-bytes) return;
+    // Large geometries must retain a complete state to avoid replaying from S0
+    // on every sequential request. Explicit budgets remain hard limits.
+    const auto required=add_size(sizeof(*this),bytes);
+    const auto limit=retain_one_ && required>budget_ ? required : budget_;
+    if(required>limit) return;
     std::lock_guard<std::mutex> lock(mutex_);
     for(auto& e:entries_) if(e.value && e.value->frame==value->frame) {touch(e);return;}
-    while(used_>budget_-sizeof(*this)-bytes || count()==entries_.size()) {
+    while(used_>limit-required || count()==entries_.size()) {
       Entry* oldest=nullptr;
       for(auto& e:entries_) if(e.value && (!oldest || e.age>oldest->age)) oldest=&e;
       used_-=oldest->value->bytes(); oldest->value.reset();
@@ -65,6 +70,7 @@ private:
   std::size_t count() const {std::size_t n=0;for(const auto& e:entries_) n+=bool(e.value);return n;}
   std::array<Entry,4> entries_{};
   const std::size_t budget_;
+  const bool retain_one_;
   std::size_t used_=0;
   mutable std::mutex mutex_;
 };

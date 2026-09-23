@@ -47,6 +47,22 @@ def main():
     for strength in (.2,.7,2,1e38):
         other=c.neo_fft.FFT3D(src,pfactor=strength,**base)
         for n in (1,8):assert np.asarray(other.get_frame(n)[0]).tobytes()==np.asarray(sampled.get_frame(n)[0]).tobytes()
+    # The complete 720p YUV420 state exceeds 64 MiB. Sequential requests must
+    # still reuse the preceding checkpoint, while backward seeks stay canonical.
+    hd,_,_=source(vs,dict(format='420',bits=8,width=1280,height=720,frames=4),53)
+    requested=[]
+    def record(n,f):
+        requested.append(n);return f
+    hd=c.std.ModifyFrame(hd,clips=hd,selector=record)
+    c.std.SetVideoCache(hd,mode=0)
+    large=c.neo_fft.FFT3D(hd,bt=0,bw=32,bh=32,ow=16,oh=16,sigma=2,opt=args.opt,mt=False,ncpu=1)
+    c.std.SetVideoCache(large,mode=0)
+    def pixels(n):
+        frame=large.get_frame(n)
+        return [np.asarray(frame[p]).tobytes() for p in range(frame.format.num_planes)]
+    first=pixels(1);requested.clear();pixels(2)
+    assert requested==[2],('oversized checkpoint replayed history',requested)
+    assert pixels(1)==first
     if args.reference:
         for model in ({},{'sigma2':9},{'pfactor':.7,'pframe':8,'px':2,'py':2}):
             kw=dict(bt=0,bw=8,bh=8,ow=4,oh=4,sigma=12,kratio=2,**model)
