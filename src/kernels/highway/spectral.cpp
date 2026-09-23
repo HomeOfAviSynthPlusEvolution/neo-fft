@@ -126,7 +126,17 @@ void SpectralPrevalidated(std::complex<float>* x, const std::complex<float>* gri
   detail::spectral_prevalidated(x + k, grid ? grid + k : nullptr, count - k, scale, tail);
 }
 
-void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+template<class D,class V> HWY_INLINE void TemporalAccumulate(D d,V xr,V xi,
+    const std::complex<float>& w,V& re,V& im) {
+  const auto wr=hn::Set(d,w.real()),wi=hn::Set(d,w.imag());
+  re=hn::Add(re,hn::Sub(hn::Mul(xr,wr),hn::Mul(xi,wi)));
+  im=hn::Add(im,hn::Add(hn::Mul(xi,wr),hn::Mul(xr,wi)));
+}
+
+// Fix the short transform length without changing the ordered arithmetic or
+// twiddle values. Named vectors also support sizeless SVE/RVV vector types.
+template<int T>
+void Fft3dTemporalFixed(const std::complex<float>* const* spectra, int c, std::size_t bins,
                    float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
                    std::complex<float>* out) {
   if (!bins)
@@ -187,16 +197,20 @@ void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T,
       }
       const auto power_noise=noise.mode==PrimaryMode::Table
         ? hn::Mul(hn::LoadU(d,noise.table.data()+k),hn::Set(d,noise.multiplier)) : noise_v;
+      auto x0r=zero,x0i=zero,x1r=zero,x1i=zero,x2r=zero,x2i=zero,x3r=zero,x3i=zero,x4r=zero,x4i=zero;
+      hn::LoadInterleaved2(d,reinterpret_cast<const float*>(spectra[0])+2*k,x0r,x0i);
+      hn::LoadInterleaved2(d,reinterpret_cast<const float*>(spectra[1])+2*k,x1r,x1i);
+      if constexpr(T>2) hn::LoadInterleaved2(d,reinterpret_cast<const float*>(spectra[2])+2*k,x2r,x2i);
+      if constexpr(T>3) hn::LoadInterleaved2(d,reinterpret_cast<const float*>(spectra[3])+2*k,x3r,x3i);
+      if constexpr(T>4) hn::LoadInterleaved2(d,reinterpret_cast<const float*>(spectra[4])+2*k,x4r,x4i);
       auto y_re=zero,y_im=zero;
       for(int m=0;m<T;++m) {
         auto re=zero,im=zero;
-        for(int j=0;j<T;++j) {
-          auto in_re=zero,in_im=zero;
-          hn::LoadInterleaved2(d,reinterpret_cast<const float*>(spectra[j])+2*k,in_re,in_im);
-          const auto wr=hn::Set(d,twiddles.fwd[T][m][j].real()),wi=hn::Set(d,twiddles.fwd[T][m][j].imag());
-          re=hn::Add(re,hn::Sub(hn::Mul(in_re,wr),hn::Mul(in_im,wi)));
-          im=hn::Add(im,hn::Add(hn::Mul(in_im,wr),hn::Mul(in_re,wi)));
-        }
+        TemporalAccumulate(d,x0r,x0i,twiddles.fwd[T][m][0],re,im);
+        TemporalAccumulate(d,x1r,x1i,twiddles.fwd[T][m][1],re,im);
+        if constexpr(T>2) TemporalAccumulate(d,x2r,x2i,twiddles.fwd[T][m][2],re,im);
+        if constexpr(T>3) TemporalAccumulate(d,x3r,x3i,twiddles.fwd[T][m][3],re,im);
+        if constexpr(T>4) TemporalAccumulate(d,x4r,x4i,twiddles.fwd[T][m][4],re,im);
         if(m==0) {re=hn::Sub(re,grid_re);im=hn::Sub(im,grid_im);}
         const auto power=hn::Add(hn::Mul(re,re),hn::Mul(im,im));
         non_finite=hn::Or(non_finite,hn::Not(hn::IsFinite(power)));
@@ -281,6 +295,18 @@ void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T,
         out[k] = y * inv_T;
       }
     }
+  }
+}
+
+void Fft3dTemporalPrevalidated(const std::complex<float>* const* spectra, int T, int c, std::size_t bins,
+                   float degrid, const std::complex<float>* grid, NoisePower noise, float lower,
+                   std::complex<float>* out) {
+  switch(T) {
+    case 1: return Fft3dTemporalFixed<1>(spectra,c,bins,degrid,grid,noise,lower,out);
+    case 2: return Fft3dTemporalFixed<2>(spectra,c,bins,degrid,grid,noise,lower,out);
+    case 3: return Fft3dTemporalFixed<3>(spectra,c,bins,degrid,grid,noise,lower,out);
+    case 4: return Fft3dTemporalFixed<4>(spectra,c,bins,degrid,grid,noise,lower,out);
+    case 5: return Fft3dTemporalFixed<5>(spectra,c,bins,degrid,grid,noise,lower,out);
   }
 }
 

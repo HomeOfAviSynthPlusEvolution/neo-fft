@@ -307,9 +307,9 @@ int main() {
       CHECK(fft3d_temporal_target(1) != nullptr);
 
       for (int T : {1, 2, 3, 4, 5}) {
-        const int c = T / 2;
+        for (int c=0;c<T;++c)
         for (int bins : {1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 64, 65, 128, 144, 544}) {
-          for (bool with_grid : {false, true}) {
+          for (bool with_grid : {false, true}) for(bool table:{false,true}) {
             std::vector<std::vector<std::complex<float>>> frames(T, std::vector<std::complex<float>>(bins));
             std::vector<const std::complex<float>*> ptrs(T);
             for (int j = 0; j < T; ++j) {
@@ -329,7 +329,10 @@ int main() {
 
             std::vector<std::complex<float>> out_opt(bins), out_sc(bins);
             const float degrid = with_grid ? 0.75f : 0.0f;
-            const float noise = 2.5f;
+            std::vector<float> powers(bins);
+            for(int k=0;k<bins;++k)powers[k]=float(k%11)*.25f;
+            NoisePower noise;noise.uniform=2.5f;
+            if(table){noise.mode=PrimaryMode::Table;noise.table={powers.data(),powers.size()};noise.multiplier=float(T);}
             const float lower = 0.25f;
 
             opt_temporal(ptrs.data(), T, c, bins, degrid, with_grid ? grid_data.data() : nullptr, noise, lower, out_opt.data());
@@ -347,6 +350,13 @@ int main() {
             }
           }
         }
+      }
+      for(int T=2;T<=5;++T)for(int bad=0;bad<T;++bad)for(int bin:{0,7,16,32}) {
+        std::vector<std::vector<std::complex<float>>> input(T,std::vector<std::complex<float>>(33,{.25f,.125f}));
+        std::vector<const std::complex<float>*> slots(T);
+        for(int j=0;j<T;++j)slots[j]=input[j].data();
+        input[bad][bin]={NAN,0};Guarded out(33);
+        rejects([&]{opt_temporal(slots.data(),T,T/2,33,0,nullptr,1.f,0,out.data);});
       }
     }
 
