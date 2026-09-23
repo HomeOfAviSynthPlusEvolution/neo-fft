@@ -1,5 +1,7 @@
 # Phase-1 execution and error contract
 
+Historical phase-1 contract. For current thread controls and removed parameters, apply the later [execution-policy revision](../phase-4/execution.md).
+
 Specification: RUN-001. Evidence: new resource/host contract, preserving stateless spatial behavior.
 
 ## Creation and frame dependencies

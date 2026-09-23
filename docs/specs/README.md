@@ -10,4 +10,6 @@
 
 [Phase 5](phase-5/README.md): Original DFTTest temporal block overlap-add (`tmode=1`), even/odd temporal sizes, absolute block lattice, calibrated windows/profiles, deterministic execution and comparison with the pinned original AVS implementation. AVS integration and final distribution move to phase 6.
 
+Current execution policy, revised through `c761c8c`, is defined in [RUN-004](phase-4/execution.md): both filters execute inline on the calling host thread, while host frame concurrency remains supported. DFTTest threads is reserved and has no execution or retention effect. FFT3D mt/ncpu/measure and DFTTest fft_threads are removed; KernelInfo retains its read-only fft_threads=1 diagnostic. Earlier phase signatures and admission rules are historical baselines, superseded by these explicit revisions.
+
 Each function directory contains its mathematical operators in `kernel-*.md` and its public interface in `plugin.md`. Shared operators are referenced rather than duplicated. Implement the scalar definitions before adding optimized paths.

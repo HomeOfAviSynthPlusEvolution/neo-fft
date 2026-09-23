@@ -20,7 +20,7 @@ If a block cache is implemented, key it by instance/configuration identity, sele
 
 Default optional cache bound: 64 MiB and at most 64 entries per instance, including actual allocated capacities and metadata; an entry larger than the budget is not cached. Use synchronized immutable publication and bounded LRU retention. Leased evicted entries remain alive, with their bytes counted separately in active-request diagnostics. Each request keeps only its current bounded batch of leases; do not lease the entire history. Cache absence, misses, eviction, duplicate builds and disabling the cache must leave output bit-identical in one arithmetic configuration. Existing idle-workspace budgets remain phase 4's independent limits.
 
-No lock is held during host fetch, FFT, worker join or callback. Do not wait for another unfinished output request to fill a cache/model; deterministic duplicate computation is acceptable. Publish only complete finite products. On error discard private/partial products, release leases and fail the frame; successful unrelated immutable entries remain valid. Cancellation and teardown follow phase 4.
+No lock is held during host fetch, FFT or callback. No internally owned workers remain under the revised phase-4 execution policy. Do not wait for another unfinished output request to fill a cache/model; deterministic duplicate computation is acceptable. Publish only complete finite products. On error discard private/partial products, release leases and fail the frame; successful unrelated immutable entries remain valid. Cancellation and teardown follow phase 4.
 
 ## Work order and bounds
 

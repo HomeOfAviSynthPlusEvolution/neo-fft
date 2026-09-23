@@ -35,6 +35,6 @@ Source was inspected at that revision; the original binary has not been built or
 - Use independent output requests with bounded working memory, rather than reproducing a mutable last-block/output-ring cache. No Kalman-like history replay or shared current output state.
 - Process only blocks contributing to n. The reference may compute extra preceding blocks to warm its output ring; their results cannot affect n and are not required dependencies here.
 - Preserve phase-3 curve/sample-table semantics and phase-4 deterministic dither, including deliberate reference differences. The original's default sigma/tbsize, string/file inputs, packed formats, RNG and dispatch numbers are not imported.
-- Preserve canonical summation order. Caching and worker counts must not change output. Scalar versus Highway/backend comparisons use calibrated budgets; execution-order comparisons within one arithmetic configuration are bitwise.
+- Preserve canonical summation order. Caching, host concurrency and reserved threads values must not change output. Scalar versus Highway/backend comparisons use calibrated budgets; execution-order comparisons within one arithmetic configuration are bitwise.
 
 Implement scalar geometry/window/operator first, then the formal VS path and original-reference comparison, then Highway and full regression. The original AVS plugin is a test oracle in this phase; that does not require exposing Neo-FFT's AVS entry early.
