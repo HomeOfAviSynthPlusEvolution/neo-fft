@@ -26,7 +26,6 @@ Filter::State state(FFT3DConfig config, std::size_t budget=64*1024*1024) {
   config.bt=0;config.bw=8;config.bh=8;config.ow=4;config.oh=4;config.opt=1;
   Filter::State s;
   s.source={32,24,INT32_MAX,{ds::ColorFamily::Gray,ds::SampleFormat::Float32,1,0,0}};
-  s.executor=std::make_shared<runtime::Executor>(1);
   s.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},config);
   s.rois[0]={0,0,32,24,false};s.kalman=s.plans[0]->kalman();
   s.sampled=s.plans[0]->needs_pattern_frame();s.pattern_frame=11;

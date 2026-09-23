@@ -88,16 +88,16 @@ void validate(const DFTConfig& c) {
   select_spectral(c.opt);
   select_spatial(c.opt);
 }
-Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c, std::shared_ptr<runtime::Executor> executor, std::shared_ptr<runtime::Retention> retention)
+Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c, std::shared_ptr<runtime::Retention> retention)
     : geometry(geometry3d(w, h, c)), format(f), algorithm(Algorithm::FFT3D), temporal_size(std::max(1, c.bt)), fft(c.bh, c.bw),
-      executor_(executor ? std::move(executor) : std::make_shared<runtime::Executor>(c.mt ? 3 : 1)), denoise_(c.bt != -1),
+      denoise_(c.bt != -1),
       wx_(fft3d_window(c.bw, geometry.x.overlap, c.wintype)), wy_(fft3d_window(c.bh, geometry.y.overlap, c.wintype)),
       kernel_(select_spectral(c.opt, true)), temporal_kernel_(select_fft3d_temporal(c.opt, true)),
       spatial_(select_spatial(c.opt)), model_(select_model(c.opt)), mean_scale_(c.degrid),
       pool_(runtime::make_workspace_budget(geometry, fft.samples(),
                                            fft.bins() * std::size_t(std::max(1, c.bt) + 1), true,
                                            std::max(1, c.bt),
-                                           select_optimal_batch_size(fft.samples(), geometry.x.count)),executor_->workers(),std::move(retention)) {
+                                           select_optimal_batch_size(fft.samples(), geometry.x.count)),1,std::move(retention)) {
   valid_format(f);
   kalman_kernel_=select_kalman(c.opt);copy_row_=select_copy_row(c.opt);dither_noise_=select_dither_noise(c.opt);
   const float factor = f.floating ? 1.0f / 255 : float(1 << (f.bits - 8));

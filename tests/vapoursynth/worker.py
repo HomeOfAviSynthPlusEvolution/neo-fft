@@ -76,7 +76,8 @@ def run(args):
             src, inputs, digest = source(vs,case,args.seed)
             record['input_sha256'] = digest
             params = dict(case['params'],fft_backend='pocketfft',opt=args.opt)
-            params.update(dict(bt=1,ncpu=1,mt=False) if args.algorithm=='FFT3D' else dict(tbsize=1,threads=1,fft_threads=1))
+            params.update(dict(bt=1,ncpu=1) if args.algorithm=='FFT3D' else dict(tbsize=1,threads=1,fft_threads=1))
+            if args.algorithm=='FFT3D' and not args.new: params['mt']=False
             if args.public_release:
                 del params['fft_backend']
                 if args.algorithm=='FFT3D': params['measure']=False

@@ -56,7 +56,7 @@ def main():
             requested.append(n);return f
         hd=c.std.ModifyFrame(hd,clips=hd,selector=record)
         c.std.SetVideoCache(hd,mode=0)
-        large=c.neo_fft.FFT3D(hd,bt=0,bw=32,bh=32,ow=16,oh=16,sigma=2,opt=args.opt,mt=False,ncpu=1)
+        large=c.neo_fft.FFT3D(hd,bt=0,bw=32,bh=32,ow=16,oh=16,sigma=2,opt=args.opt,ncpu=1)
         c.std.SetVideoCache(large,mode=0)
         def pixels(n):
             frame=large.get_frame(n)

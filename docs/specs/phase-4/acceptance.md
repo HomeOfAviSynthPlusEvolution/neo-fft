@@ -51,7 +51,7 @@ Integration covers both smode values, temporal T=1 and odd T>1, all five ftypes,
 
 ## Execution and release gate
 
-Validate all public control domains and historical opt aliases, effective worker/FFT counts, PocketFFT's effective FFT count 1, absent FFTW errors and tmode=1 rejection. With sufficient work prove the opened own-worker paths actually execute in parallel; verify bitwise results across their worker counts. Scalar versus Highway and optional distinct FFT plans use calibrated budgets. Confirm one instance cannot alter another's planner settings or dispatch.
+Validate all public control domains and historical opt aliases, effective worker/FFT counts, PocketFFT's effective FFT count 1, absent FFTW errors and tmode=1 rejection. FFT3D must reject the removed mt parameter, execute plane work on the calling thread and preserve bitwise results under concurrent host requests, including Kalman replay. With sufficient work prove DFTTest's retained own-worker path executes in parallel and preserves bitwise results across worker counts. Scalar versus Highway and optional distinct FFT plans use calibrated budgets. Confirm one instance cannot alter another's planner settings or dispatch.
 
 Stress active concurrency within the test machine's configured limit (build/test processes together <=4), repeated create/destroy, warm/cold model/cache, error retries and cancellation. Check idle workspace/checkpoint budgets separately from active leases and disclose untracked backend allocations. Use supported sanitizer/guard/ownership instrumentation; list unsupported or skipped checks rather than treating their absence as a pass. Error assertions use structural stage/category, never localized text matching.
 

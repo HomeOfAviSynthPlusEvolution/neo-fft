@@ -25,7 +25,6 @@ struct Filter {
     std::shared_ptr<const DFTNoise> dft_noise;
     int sample_bits = 8;
     bool kalman = false;
-    std::shared_ptr<runtime::Executor> executor=std::make_shared<runtime::Executor>(1);
     std::shared_ptr<runtime::Retention> retention;
     std::shared_ptr<runtime::SpectraCache> spectra;
     int requested_fft_workers=1;
@@ -75,10 +74,11 @@ struct Filter {
     State state;
     state.source = info; state.temporal_size = t_size;
     const int workers=[&] {
-      if constexpr(A==Algorithm::FFT3D) return config.mt ? std::max(1,int(std::count(selected.begin(),selected.begin()+f.plane_count,true))) : 1;
+      if constexpr(A==Algorithm::FFT3D) return 1;
       else return config.threads;
     }();
-    state.executor=std::make_shared<runtime::Executor>(workers);
+    std::shared_ptr<runtime::Executor> executor;
+    if constexpr(A==Algorithm::DFTTest) executor=std::make_shared<runtime::Executor>(workers);
     state.retention=std::make_shared<runtime::Retention>(workers);
     if constexpr(A==Algorithm::FFT3D) state.requested_fft_workers=config.ncpu;
     else {state.requested_fft_workers=config.fft_threads;state.temporal_mode=config.temporal_mode;state.temporal_overlap=config.temporal_overlap;}
@@ -90,11 +90,11 @@ struct Filter {
           const int w = info.width >> (chroma ? f.subsampling_w : 0), h = info.height >> (chroma ? f.subsampling_h : 0);
           const SampleFormat sample_format{state.sample_bits,f.sample_format == ds::SampleFormat::Float32,chroma};
           if constexpr (A == Algorithm::DFTTest) {
-            state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config,state.dft_noise,state.executor,state.retention);
+            state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config,state.dft_noise,executor,state.retention);
             state.dft_noise = state.plans[p]->dft_noise();
           } else {
             state.rois[p] = make_roi(w,h,chroma ? f.subsampling_w : 0,chroma ? f.subsampling_h : 0,config);
-            state.plans[p] = std::make_shared<Plan>(state.rois[p].width,state.rois[p].height,sample_format,config,state.executor,state.retention);
+            state.plans[p] = std::make_shared<Plan>(state.rois[p].width,state.rois[p].height,sample_format,config,state.retention);
           }
         } catch (const std::exception& e) {
           throw std::invalid_argument("plane " + std::to_string(p) + ": " + e.what());
@@ -201,7 +201,7 @@ struct Filter {
         for(int p=0;p<state.source.format.plane_count;++p) if(candidates[p]) state.plans[p]->publish_pattern(std::move(candidates[p]));
         state.models_ready->store(true,std::memory_order_release);
       } else if(r.current) {
-        state.executor->run(state.source.format.plane_count,[&](int p) { if(!state.plans[p]) return;
+        for(int p=0;p<state.source.format.plane_count;++p) { if(!state.plans[p]) continue;
           const auto consume=[&](auto s) {state.plans[p]->advance_kalman(s,r.current->planes[p]);};
           const auto& view=source.frame.plane(p);
           switch(state.source.format.sample_format) {
@@ -209,7 +209,7 @@ struct Filter {
             case ds::SampleFormat::Float32: with_roi<float>(view,state.rois[p],state.plans[p]->copy_row(),consume);break;
             default: with_roi<std::uint16_t>(view,state.rois[p],state.plans[p]->copy_row(),consume);break;
           }
-        });
+        }
         r.current->frame=r.pending; ++r.steps;
       }
     } // Drop get()'s owning snapshot before releasing the staged-store owner.
@@ -244,7 +244,7 @@ struct Filter {
     const auto src=unwrap(ctx.frames.get(0,ctx.output_frame));validate_source(src.frame,state);
     require(ctx.dst.format==state.source.format && ctx.dst.plane_count==state.source.format.plane_count,"output format differs");
     const auto* checkpoint=r.current ? r.current.get() : r.start.get();
-    state.executor->run(ctx.dst.plane_count,[&](int p) {
+    for(int p=0;p<ctx.dst.plane_count;++p) {
       const auto* k=checkpoint && state.plans[p] ? &checkpoint->planes[p] : nullptr;
       const auto& s=src.frame.plane(p);const auto& d=ctx.dst.plane(p);
       switch(state.source.format.sample_format) {
@@ -252,7 +252,7 @@ struct Filter {
         case ds::SampleFormat::Float32: render_plane<float>(s,d,state.plans[p].get(),state.rois[p],k);break;
         default: render_plane<std::uint16_t>(s,d,state.plans[p].get(),state.rois[p],k);break;
       }
-    });
+    }
     if(r.current) state.checkpoints->publish(std::move(r.current));
     return ds::Result<ds::VideoProcessResult>::success({});
   }
@@ -528,8 +528,7 @@ struct Filter {
           break;
       }
     };
-    if constexpr(A==Algorithm::FFT3D) state.executor->run(ctx.dst.plane_count,process_plane);
-    else for(int p=0;p<ctx.dst.plane_count;++p) process_plane(p);
+    for(int p=0;p<ctx.dst.plane_count;++p) process_plane(p);
     return ds::Result<ds::VideoProcessResult>::success({});
   }
 };

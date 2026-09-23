@@ -6,14 +6,22 @@ from fixtures import environment,source
 
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('--plugin',type=Path,required=True);ap.add_argument('--opt',type=int,default=1);args=ap.parse_args()
-    policy=environment(vs);c=vs.core;c.num_threads=1;c.std.LoadPlugin(path=str(args.plugin.resolve()))
+    policy=environment(vs);c=vs.core;c.num_threads=4;c.std.LoadPlugin(path=str(args.plugin.resolve()))
     src,_,_=source(vs,dict(format='rgb',bits=8,width=128,height=96,frames=7),41)
     for bt in (-1,0,1,3,5):
         kw=dict(bt=bt,bw=8,bh=8,l=2,t=2,r=2,b=2,interlaced=True,opt=args.opt)
-        a=c.neo_fft.FFT3D(src,mt=False,ncpu=1,**kw);b=c.neo_fft.FFT3D(src,mt=True,ncpu=2147483647,**kw)
-        for n in (6,0,2,4):
-            fa=a.get_frame(n);fb=b.get_frame(n)
+        a=c.neo_fft.FFT3D(src,ncpu=1,**kw);b=c.neo_fft.FFT3D(src,ncpu=2147483647,**kw)
+        order=(6,0,2,4)
+        expected=[a.get_frame(n) for n in order]
+        pending=[b.get_frame_async(n) for n in order]
+        for n,fa,future in zip(order,expected,pending):
+            fb=future.result()
             for p in range(3):assert np.asarray(fa[p]).tobytes()==np.asarray(fb[p]).tobytes(),(bt,n,p)
+    for removed_mt in (False,True):
+        try:c.neo_fft.FFT3D(src,mt=removed_mt)
+        except vs.Error:pass
+        else:raise AssertionError('removed mt parameter accepted')
+    c.num_threads=1
     for T in (1,3):
         for mode in (0,1):
             for dither in (0,1,4):
@@ -32,5 +40,5 @@ def main():
         try:c.neo_fft.DFTTest(src,opt=opt)
         except vs.Error:pass
         else:raise AssertionError(opt)
-    print('Phase 4 execution: mt/threads bitwise invariant; opt aliases; requested FFT workers INT_MAX, effective PocketFFT workers 1')
+    print('Phase 4 execution: FFT3D host concurrency invariant and mt removed; DFTTest threads invariant; opt aliases; effective PocketFFT workers 1')
 if __name__=='__main__':main()

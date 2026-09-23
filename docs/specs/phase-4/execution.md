@@ -8,7 +8,7 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 | --- | --- |
 | FFT3D opt | Any int32 accepted, matching the pinned dispatcher; 1 selects own scalar kernels, every other value automatic Highway |
 | DFTTest opt | Only 0,1,2,3,8; 1 selects own scalar, all others automatic Highway |
-| FFT3D mt | false: own work runs on the calling host worker; true: selected planes may run concurrently, maximum actual plane count (<=3) |
+| FFT3D mt | Removed by the user-directed execution-policy revision; supplying it fails creation. All plane work runs on the calling host worker |
 | FFT3D ncpu | Positive int32 requested maximum FFT workers; default 2; PocketFFT effective 1 |
 | FFT3D cache_frames | Default -1: auto `bt + host_threads - 1`; 0 disables raw-frequency caching; positive int32 is a frame limit; values below -1 fail |
 | FFT3D cache_mb | Default 128 MiB; -1 selects the same default budget; 0 disables raw-frequency caching; positive int32 is a memory limit; values below -1 fail |
@@ -19,9 +19,9 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 
 opt aliases do not force a named instruction set or bypass runtime CPU capability checks. opt=1 controls own kernels, not the third-party FFT's ISA. Do not accidentally map historical opt=8 to a GPU backend.
 
-Implement the opened own-worker paths: FFT3D mt=true can schedule independent selected planes; DFTTest threads>1 can schedule independent block transforms/filtering within bounded batches. One worker is valid for insufficient work or resource contention, but accepting the parameter while unconditionally ignoring it is not completion. Test with enough independent work and an internal active-worker counter. No throughput target is imposed by acceptance.
+FFT3D has no internal executor, including ordinary filtering, preview, Kalman replay and rendering. Process planes in order on the calling host worker. Host frame concurrency and cache/model synchronization remain supported. This user-directed revision supersedes the historical mt parameter and plane-worker requirements in earlier phases.
 
-Automatic own-worker policy is fixed at one for DFTTest; FFT3D mt=false likewise adds no own workers. The user may opt into internal work alongside host-level frame concurrency. Share each instance's worker capacity across its requests rather than creating a new persistent pool per frame. Cap additional active own workers to the resolved maximum (FFT3D <=3, DFTTest <=16); the calling host thread may participate. A caller that cannot obtain an internal worker can perform work inline. Do not block a host callback merely waiting for an idle workspace/worker owned by an unrelated request that itself needs host progress.
+DFTTest threads>1 still schedules independent block transforms/filtering within bounded batches; its policy is unchanged by this FFT3D revision. Automatic own-worker count is one. Share each instance's additional worker capacity across its requests, bounded by the resolved count minus the participating caller (resolved count <=16). A caller without an available internal worker executes inline. Test with enough independent work and an active-worker counter; no throughput target is imposed. Do not block a host callback waiting for a worker/workspace owned by an unrelated request that itself needs host progress.
 
 Required PocketFFT remains single-threaded internally. If optional FFTW is delivered, report a checked effective FFT-worker maximum bounded by 16 and available backend capability; unsupported threaded capability resolves to 1. To avoid nested internal teams, choose own parallelism or FFT parallelism for a request: if effective FFT workers>1, effective own workers=1. Plan creation/destruction and any global backend thread/planner state must be synchronized without affecting active plans. Changing one instance's controls must not mutate another's plan. Record requested/effective controls in test manifests; no extra frame properties are added.
 
@@ -29,7 +29,7 @@ Required PocketFFT remains single-threaded internally. If optional FFTW is deliv
 
 Window/model construction order and scalar operation definitions remain inherited. Parallel block processing stores private results and commits overlap-add contributions in the same canonical order as the scalar path; racing float atomics, independent strip sums merged in a different order or scheduler-dependent reductions are forbidden. Keep batches bounded independently of image frame count and replay distance. A scheduling change cannot alter padding, logical bins, tail safety or reflection.
 
-Kalman bins/planes within one time step may run concurrently; the next source time step begins only after all selected-plane state updates complete. Each request has private mutable state. Dither's final scan runs sequentially per plane; planes are independent. Pattern/noise estimates use a fixed reduction order and immutable publication.
+Kalman time steps and selected planes execute sequentially within each request; independent host requests retain private mutable state. Dither's final scan runs sequentially per plane. Pattern/noise estimates use a fixed reduction order and immutable publication.
 
 Within one build/backend/dispatch/plan arithmetic configuration, output must be bit-identical across request order, host concurrency, own-worker count, cache warmth, replay partition and repeated runs. Disabling/enabling checkpoint caching cannot change it. Scalar versus Highway and distinct FFT plans/backends use the inherited calibrated numerical budgets; do not silently require bit equality between different FFTW threading plans. Dither random samples themselves are exact and independent of every execution control. Test near quantization/motion thresholds, where small spectral differences can change discrete decisions; report these separately instead of averaging them away.
 

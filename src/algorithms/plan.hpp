@@ -31,7 +31,7 @@ struct FFT3DConfig {
   int pframe = 0, px = 0, py = 0;
   bool pshow = false;
   int left = 0, top = 0, right = 0, bottom = 0;
-  bool interlaced = false, mt = false;
+  bool interlaced = false;
   int ncpu = 2;
   int cache_frames = -1, cache_mb = runtime::SpectraCache::default_mb;
 };
@@ -49,7 +49,7 @@ void validate(const FFT3DConfig& c);
 void validate(const DFTConfig& c);
 class Plan {
 public:
-  Plan(int width, int height, SampleFormat format, const FFT3DConfig& config, std::shared_ptr<runtime::Executor> executor = {}, std::shared_ptr<runtime::Retention> retention = {});
+  Plan(int width, int height, SampleFormat format, const FFT3DConfig& config, std::shared_ptr<runtime::Retention> retention = {});
   Plan(int width, int height, SampleFormat format, const DFTConfig& config, std::shared_ptr<const DFTNoise> noise = {}, std::shared_ptr<runtime::Executor> executor = {}, std::shared_ptr<runtime::Retention> retention = {});
   const Geometry geometry;
   const SampleFormat format;
@@ -80,7 +80,10 @@ public:
     auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane,nullptr,targets,cache,registration);
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
-  const runtime::Executor& executor() const {return *executor_;}
+  const runtime::Executor& executor() const {
+    require(bool(executor_), "FFT3D has no internal executor");
+    return *executor_;
+  }
   CopyRow copy_row() const {return copy_row_;}
   bool kalman() const { return kalman_; }
   KalmanState initial_kalman() const;
