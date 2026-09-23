@@ -371,7 +371,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     checked_plane(src.data(), src.width(), src.height(), src.stride_bytes(), se);
     disjoint(src.data(), se, dst.data(), de);
     if constexpr (std::is_same_v<T, float>) {
-      for (int y = 0; !preview_ && !kalman && y < src.height(); ++y)
+      for (int y = 0; algorithm == Algorithm::DFTTest && !preview_ && !kalman && y < src.height(); ++y)
         spatial_.validate_finite(src.row_ptr(y), std::size_t(src.width()));
     }
     unique[slot] = j+1;
@@ -395,7 +395,10 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
   if (kalman) require(kalman->last.size()==state_bins(),"Kalman checkpoint shape differs");
   ws.reset();
   for (int j = 0; j < T_slots; ++j) {
-    if (!preview_ && !kalman && !temporal_ola_) pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
+    if (!preview_ && !kalman && !temporal_ola_) {
+      if (algorithm == Algorithm::FFT3D) pad_fft3d_source(sources[j], ws.padded(j), geometry, format, model_);
+      else pad_source(sources[j], ws.padded(j), geometry, format, algorithm);
+    }
   }
 
   auto accum = ws.accum();

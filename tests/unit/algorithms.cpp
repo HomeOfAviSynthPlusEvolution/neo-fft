@@ -1,6 +1,8 @@
 #include "algorithms/plan.hpp"
+#include "algorithms/pad.hpp"
 #include "plugin/filter.hpp"
 #include "../test.hpp"
+#include <cstring>
 #include <future>
 using namespace neo_fft;
 void windows() {
@@ -498,8 +500,47 @@ void repeated_source_validation() {
   views[2]=views[0];input[0]=NAN;rejects(run);
 }
 
+template<class T> void fft3d_padding(SampleFormat format) {
+  for (int opt : {0, 1}) for (int block : {8, 16, 32}) for (int overlap : {0, block / 3, block / 2})
+    for (bool tight : {false, true}) {
+    if (tight && overlap != block / 2) continue;
+    const int width = tight ? block + 1 : 2 * block + 3;
+    const int height = tight ? block + 1 : 2 * block + 5, stride = width + 5;
+    const Geometry geometry{fft3d_axis(width, block, overlap), fft3d_axis(height, block, overlap)};
+    const int pitch = geometry.x.cover + 7;
+    std::vector<T> input(stride * height);
+    for (std::size_t i = 0; i < input.size(); ++i) input[i] = T(i % 251);
+    if constexpr (std::is_same_v<T, float>) {
+      input[0] = -0.0f; input[1] = std::numeric_limits<float>::denorm_min();
+      input[stride + 3] = -.3125f;
+    }
+    const span2d::Plane<const T> source{input.data(), width, height, stride * std::ptrdiff_t(sizeof(T))};
+    std::vector<float> expected(pitch * geometry.y.cover, -99), actual(expected);
+    const span2d::Plane<float> old_pad{expected.data(), geometry.x.cover, geometry.y.cover, pitch * 4};
+    const span2d::Plane<float> new_pad{actual.data(), geometry.x.cover, geometry.y.cover, pitch * 4};
+    pad_source(source, old_pad, geometry, format, Algorithm::FFT3D);
+    const auto model = select_model(opt);
+    pad_fft3d_source(source, new_pad, geometry, format, model);
+    CHECK(std::memcmp(expected.data(), actual.data(), expected.size() * sizeof(float)) == 0);
+    if constexpr (std::is_same_v<T, float>) {
+      for (int pos : {0, width - 1, (height - 1) * stride, (height - 1) * stride + width - 1, stride + 3}) {
+        const float saved = input[pos];
+        for (float bad : {NAN, INFINITY, -INFINITY}) {
+          input[pos] = bad;
+          rejects([&] { pad_fft3d_source(source, new_pad, geometry, format, model); });
+        }
+        input[pos] = saved;
+      }
+    }
+  }
+}
+
 int main() {
   try {
+    fft3d_padding<std::uint8_t>({8, false, true});
+    fft3d_padding<std::uint16_t>({10, false, true});
+    fft3d_padding<std::uint16_t>({16, false, true});
+    fft3d_padding<float>({32, true, false});
     repeated_source_validation();
     windows();
     filters();
