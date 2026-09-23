@@ -598,7 +598,10 @@ void batch_r2c_3d(std::size_t batch, int depth, int height, int width, const flo
     if(width==16) {
       // Spatial codelets first, then the temporal axis. This is used only by
       // grouped callers; single-volume threshold-sensitive paths stay generic.
-      for(std::size_t b=0;b<batch;++b)
+      if(in_dist==std::size_t(depth)*256 && out_dist==std::size_t(depth)*144) {
+        // Dense groups expose all spatial planes to the cross-block column FFT.
+        codelet::batch_fft16x16_r2c(mul_size(batch,std::size_t(depth)),in,256,16,out,144,9);
+      } else for(std::size_t b=0;b<batch;++b)
         codelet::batch_fft16x16_r2c(depth,in+b*in_dist,256,16,out+b*out_dist,144,9);
       dense_axes_dispatch(batch,depth,height,out,out_dist,out,out_dist,true,false);
       return;

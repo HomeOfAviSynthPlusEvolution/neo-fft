@@ -150,10 +150,10 @@ int main() {
         }
       }
 
-      // 3. Strides, batches (0, 1, 7, 8, 9, 16, 32, 64), input preservation, output sentinels
+      // 3. Strides, full/partial eight-block groups, preservation and sentinels.
       for (int rs : {16, 20, 24, 32}) {
         for (int ss : {9, 12, 16}) {
-          for (std::size_t active : {0, 1, 7, 8, 9, 16, 32, 64}) {
+          for (std::size_t active : {0, 1, 2, 3, 5, 7, 8, 9, 15, 16, 17, 32, 64}) {
             const std::size_t total_blocks = 64;
             const std::size_t in_dist = std::size_t(rs) * 16 + 8;
             const std::size_t out_dist = std::size_t(ss) * 16 + 8;
@@ -192,11 +192,19 @@ int main() {
                     const auto idx = b * in_dist + y * rs + x;
                     check_near(out_buf[idx], in_buf[idx], 1e-6);
                   }
+                  for (int x = 16; x < rs; ++x) CHECK(out_buf[b * in_dist + y * rs + x] == -777.0f);
+                  for (int x = 9; x < ss; ++x)
+                    CHECK(spec_buf[b * out_dist + y * ss + x] == std::complex<float>(-888.0f, 444.0f));
                 }
+                for (std::size_t i = rs * 16; i < in_dist; ++i) CHECK(out_buf[b * in_dist + i] == -777.0f);
+                for (std::size_t i = ss * 16; i < out_dist; ++i)
+                  CHECK(spec_buf[b * out_dist + i] == std::complex<float>(-888.0f, 444.0f));
               } else {
                 for (std::size_t i = 0; i < in_dist; ++i) {
                   CHECK(out_buf[b * in_dist + i] == -777.0f);
                 }
+                for (std::size_t i = 0; i < out_dist; ++i)
+                  CHECK(spec_buf[b * out_dist + i] == std::complex<float>(-888.0f, 444.0f));
               }
             }
           }
@@ -498,6 +506,21 @@ int main() {
           std::vector<std::complex<float>> spectrum(sd*10,sentinel);
           transform.forward(input.data(),count,rd,spectrum.data(),sd);
           const auto original_spectrum=spectrum;
+          if(S==16 && count>1) {
+            // Dense volumes may flatten their spatial batches across time;
+            // compare with the strided path and protect both output boundaries.
+            std::vector<float> dense_input(count*samples);
+            for(int b=0;b<count;++b)std::copy_n(input.data()+b*rd,samples,dense_input.data()+b*samples);
+            const auto saved_dense=dense_input;
+            std::vector<std::complex<float>> dense_spectrum(count*bins+2,sentinel);
+            transform.forward(dense_input.data(),count,samples,dense_spectrum.data()+1,bins);
+            CHECK(dense_input==saved_dense);
+            CHECK(dense_spectrum.front()==sentinel && dense_spectrum.back()==sentinel);
+            for(int b=0;b<count;++b)for(std::size_t i=0;i<bins;++i) {
+              check_near(dense_spectrum[1+b*bins+i].real(),spectrum[b*sd+i].real(),5e-4);
+              check_near(dense_spectrum[1+b*bins+i].imag(),spectrum[b*sd+i].imag(),5e-4);
+            }
+          }
           transform.inverse(spectrum.data(),count,sd,back.data(),rd);
           CHECK(input==saved && spectrum==original_spectrum);
           for(int b=0;b<count;++b) {
