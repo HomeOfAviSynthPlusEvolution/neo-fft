@@ -21,16 +21,27 @@ def main():
         try:c.neo_fft.FFT3D(src,mt=removed_mt)
         except vs.Error:pass
         else:raise AssertionError('removed mt parameter accepted')
-    c.num_threads=1
     for T in (1,3):
         for mode in (0,1):
             for dither in (0,1,4):
                 kw=dict(tbsize=T,sbsize=9 if mode==0 else 8,smode=mode,sosize=4,dither=dither,dither_seed=17,opt=args.opt)
                 a=c.neo_fft.DFTTest(src,threads=1,**kw)
-                b=c.neo_fft.DFTTest(src,threads=3,**kw)
-                for n in (6,2,0):
-                    fa=a.get_frame(n);fb=b.get_frame(n)
+                b=c.neo_fft.DFTTest(src,threads=16,**kw)
+                order=(6,2,0,6)
+                expected=[a.get_frame(n) for n in order]
+                pending=[b.get_frame_async(n) for n in order]
+                for n,fa,future in zip(order,expected,pending):
+                    fb=future.result()
                     for p in range(3):assert np.asarray(fa[p]).tobytes()==np.asarray(fb[p]).tobytes(),(T,mode,dither,n,p)
+    kw=dict(tbsize=1,sbsize=8,sosize=4,opt=args.opt)
+    expected=c.neo_fft.DFTTest(src,**kw).get_frame(0)
+    for threads in (-2147483648,-1,0,1,3,16,17,2147483647):
+        actual=c.neo_fft.DFTTest(src,threads=threads,**kw).get_frame(0)
+        for p in range(3):assert np.asarray(actual[p]).tobytes()==np.asarray(expected[p]).tobytes(),threads
+    for threads in (-2147483649,2147483648):
+        try:c.neo_fft.DFTTest(src,threads=threads,**kw)
+        except vs.Error:pass
+        else:raise AssertionError(('out-of-int32 threads accepted',threads))
     for name,control,aliases in (('FFT3D','bt',(-2147483648,-1,0,2,3,8,2147483647)),('DFTTest','tbsize',(0,2,3,8))):
         call=getattr(c.neo_fft,name);kw={control:1};expected=call(src,opt=0,**kw).get_frame(0)
         for opt in aliases:
@@ -40,5 +51,5 @@ def main():
         try:c.neo_fft.DFTTest(src,opt=opt)
         except vs.Error:pass
         else:raise AssertionError(opt)
-    print('Phase 4 execution: FFT3D host concurrency invariant and mt removed; DFTTest threads invariant; opt aliases; effective PocketFFT workers 1')
+    print('Phase 4 execution: host concurrency invariant; mt removed; DFTTest reserved threads domain and output invariant; opt aliases; effective PocketFFT workers 1')
 if __name__=='__main__':main()

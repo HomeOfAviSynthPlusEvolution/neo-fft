@@ -201,6 +201,7 @@ inline DFTConfig dft_config(Params p) {
   c.curves.system = p.integer("ssystem", 0);
   c.dither=p.integer("dither",0);
   c.dither_seed=p.integer("dither_seed",0);
+  // Reserved: retain the accepted domain and normalization, without scheduling workers.
   c.threads=std::clamp(p.integer("threads",0),1,16);
   p.backend();
   validate(c);

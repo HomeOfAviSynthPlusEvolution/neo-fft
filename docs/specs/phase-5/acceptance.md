@@ -34,7 +34,7 @@ New VS properties are checked against source n, including when n is not the firs
 
 ## Determinism, resources and regression
 
-Within one build/backend/dispatch/arithmetic configuration compare bitwise: sequential, reverse, shuffled, repeated, concurrent duplicate and disjoint targets; own-worker counts; cold/warm models; optional cache enabled/disabled, eviction and duplicate publication. Verify canonical contribution order at overlap/quantization thresholds. Scalar versus Highway/different FFT backends use separately frozen budgets and disclose branch-sensitive differences.
+Within one build/backend/dispatch/arithmetic configuration compare bitwise: sequential, reverse, shuffled, repeated, concurrent duplicate and disjoint targets; reserved threads values; cold/warm models; optional cache enabled/disabled, eviction and duplicate publication. Verify canonical contribution order at overlap/quantization thresholds. Scalar versus Highway/different FFT backends use separately frozen budgets and disclose branch-sensitive differences.
 
 Inject source/FFT/allocation/model/output errors and cancellation. Verify retry matches clean results, no partial frame/model/cache publication, no leaked owner/lease and no shared mutable output accumulation. Instrument declared dependency union, actual live source owners, bounded batch/cache/workspace bytes and lifecycle cleanup. Vary clip length/target index at fixed geometry without allocating a clip-length fixture; state must not grow with index. Benchmark separately from correctness.
 

@@ -166,9 +166,9 @@ Plan::Plan(int w, int h, SampleFormat f, const FFT3DConfig& c, std::shared_ptr<r
     require(grid_[0].real() != 0, "FFT3D unusable grid DC");
   }
 }
-Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<const DFTNoise> noise, std::shared_ptr<runtime::Executor> executor, std::shared_ptr<runtime::Retention> retention)
+Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<const DFTNoise> noise, std::shared_ptr<runtime::Retention> retention)
     : geometry(geometry_dft(w, h, c)), format(f), algorithm(Algorithm::DFTTest), temporal_size(c.tbsize),
-      fft(c.block, c.block), executor_(executor ? std::move(executor) : std::make_shared<runtime::Executor>(std::clamp(c.threads,1,16))), kernel_(select_spectral(c.opt, true)), spatial_(select_spatial(c.opt)), model_(select_model(c.opt)),
+      fft(c.block, c.block), kernel_(select_spectral(c.opt, true)), spatial_(select_spatial(c.opt)), model_(select_model(c.opt)),
       mean_scale_(c.zmean ? 1.0f : 0.0f), center_(c.mode == 0),
       pool_(runtime::make_workspace_budget(
           geometry,
@@ -176,7 +176,7 @@ Plan::Plan(int w, int h, SampleFormat f, const DFTConfig& c, std::shared_ptr<con
           std::size_t(c.tbsize) * c.block * (c.block / 2 + 1),
           false,
           c.tbsize,
-          select_optimal_batch_size(std::size_t(c.tbsize) * c.block * c.block, geometry.x.count)),executor_->workers(),std::move(retention)) {
+          select_optimal_batch_size(std::size_t(c.tbsize) * c.block * c.block, geometry.x.count)),1,std::move(retention)) {
   valid_format(f);
   kalman_kernel_=select_kalman(c.opt);copy_row_=select_copy_row(c.opt);dither_noise_=select_dither_noise(c.opt);
   temporal_ola_=c.temporal_mode==1;
@@ -549,9 +549,9 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
         const int oy=by*gy.step;
         for(int first=0;first<gx.count;) {
           const int count=std::min(capacity,gx.count-first);
-          // Fixed FFT groups keep lane grouping independent of the worker count.
+          // Preserve fixed FFT groups and their arithmetic on the calling thread.
           // Each group owns contiguous scratch; overlap-add still commits Y then X.
-          executor_->run((count+fft_group-1)/fft_group,[&](int group) {
+          for(int group=0;group<(count+fft_group-1)/fft_group;++group) {
             const int begin=group*fft_group,end=std::min(begin+fft_group,count);
             const auto active=std::size_t(end-begin);
             for(int index=begin;index<end;++index) {
@@ -584,7 +584,7 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
               else fft3d_->inverse(ws.spectrum(begin).data(),active,bins,ws.inverse(begin).data(),samples);
               spatial_.validate_finite(ws.inverse(begin).data(),active*samples);
             }
-          });
+          }
           for(int index=0;index<count;++index) {
             const int ox=(first+index)*gx.step;
             float* inverse=ws.inverse(index).data()+std::size_t(center)*spatial_samples;

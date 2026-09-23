@@ -24,7 +24,7 @@ No lock is held during host fetch, FFT, worker join or callback. Do not wait for
 
 ## Work order and bounds
 
-Own workers may transform independent (temporal start, spatial origin, plane) jobs. Commit results in temporal-start then spatial-Y then spatial-X order; within each block retain the existing pixel contribution order. Do not use unordered atomic additions or use a cache hit to change addition grouping. Dither runs once per final plane with the phase-4 deterministic seed identity.
+Under the revised phase-4 execution policy, all transforms run on the calling host worker; threads is reserved. Commit results in temporal-start then spatial-Y then spatial-X order; within each block retain the existing pixel contribution order. Do not use unordered atomic additions or use a cache hit to change addition grouping. Dither runs once per final plane with the phase-4 deterministic seed identity.
 
 Checked arithmetic covers signed starts/slot endpoints, floor division, T*B*B, frequency extents, strides, job counts and byte capacities. Only convert a clamped, range-checked real frame index to the host index type. A near-INT_MAX n must not trigger a loop from A to n. Memory/time for one request scales with admitted geometry, T, sample tuples and active concurrency, not distance from the first frame.
 

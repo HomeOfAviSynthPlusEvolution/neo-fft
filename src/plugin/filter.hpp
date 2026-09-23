@@ -72,13 +72,7 @@ struct Filter {
     }();
     State state;
     state.source = info; state.temporal_size = t_size;
-    const int workers=[&] {
-      if constexpr(A==Algorithm::FFT3D) return 1;
-      else return config.threads;
-    }();
-    std::shared_ptr<runtime::Executor> executor;
-    if constexpr(A==Algorithm::DFTTest) executor=std::make_shared<runtime::Executor>(workers);
-    state.retention=std::make_shared<runtime::Retention>(workers);
+    state.retention=std::make_shared<runtime::Retention>(1);
     if constexpr(A==Algorithm::DFTTest) {state.temporal_mode=config.temporal_mode;state.temporal_overlap=config.temporal_overlap;}
     state.sample_bits = ds::bits_per_sample(f.sample_format);
     for (int p = 0; p < f.plane_count; ++p)
@@ -88,7 +82,7 @@ struct Filter {
           const int w = info.width >> (chroma ? f.subsampling_w : 0), h = info.height >> (chroma ? f.subsampling_h : 0);
           const SampleFormat sample_format{state.sample_bits,f.sample_format == ds::SampleFormat::Float32,chroma};
           if constexpr (A == Algorithm::DFTTest) {
-            state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config,state.dft_noise,executor,state.retention);
+            state.plans[p] = std::make_shared<Plan>(w,h,sample_format,config,state.dft_noise,state.retention);
             state.dft_noise = state.plans[p]->dft_noise();
           } else {
             state.rois[p] = make_roi(w,h,chroma ? f.subsampling_w : 0,chroma ? f.subsampling_h : 0,config);

@@ -11,7 +11,6 @@
 #include "kernels/model.hpp"
 #include "kernels/kalman.hpp"
 #include "kernels/rows.hpp"
-#include "runtime/executor.hpp"
 #include "runtime/workspace.hpp"
 #include "runtime/workspace_pool.hpp"
 #include "runtime/spectra_cache.hpp"
@@ -39,7 +38,8 @@ struct DFTConfig {
   float sbeta = 2.5f, tbeta = 2.5f, sigma = 8, sigma2 = 8, pmin = 0, pmax = 500, f0beta = 1;
   bool zmean = true;
   int temporal_mode = 0, temporal_overlap = 0;
-  int dither = 0, dither_seed = 0, threads = 1;
+  int dither = 0, dither_seed = 0;
+  int threads = 1; // Reserved; currently all work executes on the calling thread.
   DFTCurves curves;
   std::vector<NoiseLocation> locations;
   std::optional<float> alpha;
@@ -49,7 +49,7 @@ void validate(const DFTConfig& c);
 class Plan {
 public:
   Plan(int width, int height, SampleFormat format, const FFT3DConfig& config, std::shared_ptr<runtime::Retention> retention = {});
-  Plan(int width, int height, SampleFormat format, const DFTConfig& config, std::shared_ptr<const DFTNoise> noise = {}, std::shared_ptr<runtime::Executor> executor = {}, std::shared_ptr<runtime::Retention> retention = {});
+  Plan(int width, int height, SampleFormat format, const DFTConfig& config, std::shared_ptr<const DFTNoise> noise = {}, std::shared_ptr<runtime::Retention> retention = {});
   const Geometry geometry;
   const SampleFormat format;
   const Algorithm algorithm;
@@ -79,10 +79,6 @@ public:
     auto lease=pool_.acquire(); run(sources,dst,*lease,frame,plane,nullptr,targets,cache,registration);
   }
   std::shared_ptr<const DFTNoise> dft_noise() const { return dft_noise_; }
-  const runtime::Executor& executor() const {
-    require(bool(executor_), "FFT3D has no internal executor");
-    return *executor_;
-  }
   CopyRow copy_row() const {return copy_row_;}
   bool kalman() const { return kalman_; }
   KalmanState initial_kalman() const;
@@ -102,7 +98,6 @@ public:
   runtime::WorkspacePool& workspace_pool() const noexcept { return pool_; }
 
 private:
-  std::shared_ptr<runtime::Executor> executor_;
   KalmanKernel kalman_kernel_ = kalman_scalar;
   CopyRow copy_row_ = copy_row_scalar;
   DitherNoise dither_noise_ = dither_noise_scalar;

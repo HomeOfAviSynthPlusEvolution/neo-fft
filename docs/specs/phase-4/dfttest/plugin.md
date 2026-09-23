@@ -7,7 +7,7 @@ Specification: DFT-VS-004. Extends [phase-3 interface](../../phase-3/dfttest/plu
 | dither | int32, default 0; >=0 | 0 ordinary conversion, 1 diffusion, >=2 diffusion plus coordinate-based noise |
 | dither_seed | Optional nonnegative int32 | Omitted resolves to 0; used only for dither>=2 on selected UInt8 planes |
 | opt | int32, default 0 | Accept 0,1,2,3,8; execution mapping below |
-| threads | Existing int32/default 0 | Positive requests supported under [execution limits](../execution.md); fft_threads has been removed and supplying it fails creation |
+| threads | Existing int32/default 0 | Reserved for future use; currently runs on the calling thread for every accepted value, with unchanged [parsing rules](../execution.md); fft_threads has been removed and supplying it fails creation |
 
 Only selected **UInt8** output planes use [the dither operator](kernel-dither.md). UInt10/12/14/16 and Float32 keep ordinary conversion for all valid dither values; do not introduce high-bit-depth dithering. Mode 0 or 1 never initializes/advances a hidden RNG; seed has no effect. Negative dither/seed fails creation, including when inactive or planes=[]. There is no arbitrary small maximum dither mode; perform the specified binary32 scale conversion without integer overflow.
 
