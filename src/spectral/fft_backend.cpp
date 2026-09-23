@@ -11,12 +11,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -391,10 +393,10 @@ void c2r_3d(int depth, int height, int width, const std::complex<float>* in, flo
 // Use explicit temporal butterflies and PocketFFT spatial butterflies.
 // The generic spatial path keeps width real FFT, time, height axis order.
 #ifndef POCKETFFT_NO_VECTORS
-template<int N,class V>
-void temporal_butterfly(pf::detail::cmplx<V>* v,bool forward) {
+template<int N,bool Forward,class V>
+void temporal_butterfly(pf::detail::cmplx<V>* v) {
   const auto rotate=[&](pf::detail::cmplx<V> z) {
-    return forward ? pf::detail::cmplx<V>{z.i,-z.r} : pf::detail::cmplx<V>{-z.i,z.r};
+    return Forward ? pf::detail::cmplx<V>{z.i,-z.r} : pf::detail::cmplx<V>{-z.i,z.r};
   };
   if constexpr(N==3) {
     const auto sum=v[1]+v[2],difference=v[1]-v[2];
@@ -412,6 +414,64 @@ void temporal_butterfly(pf::detail::cmplx<V>* v,bool forward) {
   }
 }
 
+using FftVector=pf::detail::vtype_t<float>;
+constexpr std::size_t fft_vector_lanes=pf::detail::VLEN<float>::val;
+
+template<std::size_t... I>
+FftVector shuffle_vector(FftVector a,FftVector b) {
+#if defined(__clang__) || (defined(__GNUC__) && __GNUC__>=12)
+  return __builtin_shufflevector(a,b,I...);
+#else
+  using Indices=int __attribute__((vector_size(sizeof(FftVector))));
+  return __builtin_shuffle(a,b,Indices{int(I)...});
+#endif
+}
+
+template<std::size_t... I>
+pf::detail::cmplx<FftVector> load_complex_vector(const std::complex<float>* in,std::index_sequence<I...>) {
+  // complex<float> exposes interleaved float components. memcpy permits natural
+  // alignment and avoids introducing an aliased/aligned vector pointer.
+  const auto* components=reinterpret_cast<const float*>(in);
+  FftVector lo,hi;
+  std::memcpy(&lo,components,sizeof(lo));
+  std::memcpy(&hi,components+fft_vector_lanes,sizeof(hi));
+  return {shuffle_vector<(2*I)...>(lo,hi),shuffle_vector<(2*I+1)...>(lo,hi)};
+}
+
+template<std::size_t... I>
+void store_complex_vector(std::complex<float>* out,pf::detail::cmplx<FftVector> v,std::index_sequence<I...>) {
+  const auto lo=shuffle_vector<(I/2+(I%2)*fft_vector_lanes)...>(v.r,v.i);
+  const auto hi=shuffle_vector<(I/2+fft_vector_lanes/2+(I%2)*fft_vector_lanes)...>(v.r,v.i);
+  auto* components=reinterpret_cast<float*>(out);
+  std::memcpy(components,&lo,sizeof(lo));
+  std::memcpy(components+fft_vector_lanes,&hi,sizeof(hi));
+}
+
+template<int N,int Inner,bool Forward>
+void temporal_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
+                    std::complex<float>* out,std::size_t out_dist) {
+  constexpr auto indices=std::make_index_sequence<fft_vector_lanes>{};
+  // Each temporal plane is contiguous. Never cross a volume/padding boundary;
+  // read all N inputs before storing, so the forward transform can be in-place.
+  for(std::size_t b=0;b<batch;++b) {
+    std::size_t k=0;
+    for(;k+fft_vector_lanes<=Inner;k+=fft_vector_lanes) {
+      pf::detail::cmplx<FftVector> values[N];
+      for(int n=0;n<N;++n)values[n]=load_complex_vector(in+b*in_dist+n*Inner+k,indices);
+      temporal_butterfly<N,Forward>(values);
+      for(int n=0;n<N;++n)store_complex_vector(out+b*out_dist+n*Inner+k,values[n],indices);
+    }
+    for(;k<Inner;++k) {
+      pf::detail::cmplx<float> values[N];
+      for(int n=0;n<N;++n) {
+        const auto v=in[b*in_dist+n*Inner+k];values[n].Set(v.real(),v.imag());
+      }
+      temporal_butterfly<N,Forward>(values);
+      for(int n=0;n<N;++n)out[b*out_dist+n*Inner+k]={values[n].r,values[n].i};
+    }
+  }
+}
+
 template<int N,int Inner,int Outer>
 void dense_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
                 std::complex<float>* out,std::size_t out_dist,bool forward) {
@@ -421,8 +481,10 @@ void dense_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_d
   std::shared_ptr<pd::pocketfft_c<float>> plan;
   if constexpr(N!=3 && N!=5)plan=pd::get_plan<pd::pocketfft_c<float>>(N);
   const auto execute=[&](auto* values) {
-    if constexpr(N==3 || N==5)temporal_butterfly<N>(values,forward);
-    else plan->exec(values,1.0f,forward);
+    if constexpr(N==3 || N==5) {
+      if(forward)temporal_butterfly<N,true>(values);
+      else temporal_butterfly<N,false>(values);
+    } else plan->exec(values,1.0f,forward);
   };
   const auto lines=batch*Outer*Inner;
   std::size_t line=0;
@@ -480,15 +542,12 @@ void inverse_center_spectra(std::size_t batch,const std::complex<float>* in,std:
   using Vec=pd::vtype_t<float>;
   constexpr std::size_t bins=16*9;
   static_assert(bins%lanes==0);
+  constexpr auto indices=std::make_index_sequence<lanes>{};
   for(std::size_t b=0;b<batch;++b) for(std::size_t k=0;k<bins;k+=lanes) {
     pd::cmplx<Vec> values[N];
-    for(int n=0;n<N;++n) for(std::size_t lane=0;lane<lanes;++lane) {
-      const auto v=in[b*in_dist+n*bins+k+lane];
-      values[n].r[lane]=v.real();values[n].i[lane]=v.imag();
-    }
+    for(int n=0;n<N;++n)values[n]=load_complex_vector(in+b*in_dist+n*bins+k,indices);
     const auto result=temporal_inverse_center<N>(values);
-    for(std::size_t lane=0;lane<lanes;++lane)
-      out[b*bins+k+lane]={result.r[lane],result.i[lane]};
+    store_complex_vector(out+b*bins+k,result,indices);
   }
 }
 #endif
@@ -497,7 +556,8 @@ template<int T,int S>
 void dense_axes(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
                 std::complex<float>* out,std::size_t out_dist,bool forward,bool spatial) {
   constexpr int K=S/2+1;
-  dense_axis<T,S*K,1>(batch,in,in_dist,out,out_dist,forward);
+  if(forward)temporal_axis<T,S*K,true>(batch,in,in_dist,out,out_dist);
+  else temporal_axis<T,S*K,false>(batch,in,in_dist,out,out_dist);
   if(spatial)dense_axis<S,K,T>(batch,out,out_dist,out,out_dist,forward);
 }
 
