@@ -479,6 +479,41 @@ int main() {
       }
     }
 
+    // Common DFT volumes: native packed axes/codelets versus a binary64 DFT.
+    for(int T:{3,5})for(int S:{12,16}) {
+      const std::size_t samples=T*S*S,bins=T*S*(S/2+1),rd=samples+5,sd=bins+3;
+      std::vector<float> input(rd*10,-91);
+      for(int b=0;b<10;++b)for(std::size_t i=0;i<samples;++i)
+        input[b*rd+i]=float(int((i*17+(b%2)*7)%23)-11)/8.f;
+      const auto saved=input;
+      const auto oracle0=direct_dft_3d(input.data(),T,S,S),oracle1=direct_dft_3d(input.data()+rd,T,S,S);
+      for(auto profile:{FftProfile::scalar,FftProfile::sse2,FftProfile::avx2,FftProfile::avx512,FftProfile::native}) {
+        if(!fft_profile_supported(profile))continue;
+        RealFFT3D transform(T,S,S,profile);
+        for(int count:{0,1,2,7,8,9}) {
+          std::vector<float> back(rd*10,-92);
+          const std::complex<float> sentinel{-93,94};
+          std::vector<std::complex<float>> spectrum(sd*10,sentinel);
+          transform.forward(input.data(),count,rd,spectrum.data(),sd);
+          const auto original_spectrum=spectrum;
+          transform.inverse(spectrum.data(),count,sd,back.data(),rd);
+          CHECK(input==saved && spectrum==original_spectrum);
+          for(int b=0;b<count;++b) {
+            const auto& oracle=b%2 ? oracle1 : oracle0;
+            for(std::size_t i=0;i<bins;++i) {
+              check_near(spectrum[b*sd+i].real(),oracle[i].real(),5e-4);
+              check_near(spectrum[b*sd+i].imag(),oracle[i].imag(),5e-4);
+            }
+            for(std::size_t i=0;i<samples;++i)check_near(back[b*rd+i],input[b*rd+i],2e-6);
+          }
+          for(int b=0;b<10;++b) {
+            for(std::size_t i=b<count ? samples : 0;i<rd;++i)CHECK(back[b*rd+i]==-92);
+            for(std::size_t i=b<count ? bins : 0;i<sd;++i)CHECK(spectrum[b*sd+i]==sentinel);
+          }
+        }
+      }
+    }
+
     // 3D impulse & constant checks
     {
       const int T = 3, H = 2, W = 4;

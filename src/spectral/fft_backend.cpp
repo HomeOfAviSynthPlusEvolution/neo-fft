@@ -387,6 +387,69 @@ void c2r_3d(int depth, int height, int width, const std::complex<float>* in, flo
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
 
+// Dense small-volume C2C axes avoid the general multidimensional iterator.
+// Keep PocketFFT's butterflies and axis order: width real FFT, time, height.
+#ifndef POCKETFFT_NO_VECTORS
+template<int N,int Inner,int Outer>
+void dense_axis(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
+                std::complex<float>* out,std::size_t out_dist,bool forward) {
+  namespace pd=pf::detail;
+  constexpr auto lanes=pd::VLEN<float>::val;
+  using Vec=pd::vtype_t<float>;
+  const auto plan=pd::get_plan<pd::pocketfft_c<float>>(N);
+  const auto lines=batch*Outer*Inner;
+  std::size_t line=0;
+  for(;lines-line>=lanes;line+=lanes) {
+    std::array<std::size_t,lanes> src{},dst{};
+    for(std::size_t lane=0;lane<lanes;++lane) {
+      const auto i=line+lane,b=i/(Outer*Inner),within=i%(Outer*Inner);
+      const auto offset=(within/Inner)*N*Inner+within%Inner;
+      src[lane]=b*in_dist+offset;dst[lane]=b*out_dist+offset;
+    }
+    pd::cmplx<Vec> values[N];
+    for(int n=0;n<N;++n)for(std::size_t lane=0;lane<lanes;++lane) {
+      const auto v=in[src[lane]+n*Inner];
+      values[n].r[lane]=v.real();values[n].i[lane]=v.imag();
+    }
+    plan->exec(values,1.0f,forward);
+    for(int n=0;n<N;++n)for(std::size_t lane=0;lane<lanes;++lane)
+      out[dst[lane]+n*Inner]={values[n].r[lane],values[n].i[lane]};
+  }
+  for(;line<lines;++line) {
+    const auto b=line/(Outer*Inner),within=line%(Outer*Inner);
+    const auto offset=(within/Inner)*N*Inner+within%Inner;
+    pd::cmplx<float> values[N];
+    for(int n=0;n<N;++n) {
+      const auto v=in[b*in_dist+offset+n*Inner];values[n].Set(v.real(),v.imag());
+    }
+    plan->exec(values,1.0f,forward);
+    for(int n=0;n<N;++n)out[b*out_dist+offset+n*Inner]={values[n].r,values[n].i};
+  }
+}
+
+template<int T,int S>
+void dense_axes(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
+                std::complex<float>* out,std::size_t out_dist,bool forward,bool spatial) {
+  constexpr int K=S/2+1;
+  dense_axis<T,S*K,1>(batch,in,in_dist,out,out_dist,forward);
+  if(spatial)dense_axis<S,K,T>(batch,out,out_dist,out,out_dist,forward);
+}
+
+bool dense_shape(int depth,int height,int width) {
+  return (depth==3 || depth==5) && (height==12 || height==16) && width==height;
+}
+void dense_axes_dispatch(std::size_t batch,int depth,int size,const std::complex<float>* in,
+                         std::size_t in_dist,std::complex<float>* out,std::size_t out_dist,bool forward,bool spatial=true) {
+  if(size==12) {
+    if(depth==3)dense_axes<3,12>(batch,in,in_dist,out,out_dist,forward,spatial);
+    else dense_axes<5,12>(batch,in,in_dist,out,out_dist,forward,spatial);
+  } else {
+    if(depth==3)dense_axes<3,16>(batch,in,in_dist,out,out_dist,forward,spatial);
+    else dense_axes<5,16>(batch,in,in_dist,out,out_dist,forward,spatial);
+  }
+}
+#endif
+
 void batch_r2c_3d(std::size_t batch, int depth, int height, int width, const float* in, std::size_t in_dist,
                   std::complex<float>* out, std::size_t out_dist) {
   if (batch == 0)
@@ -403,6 +466,23 @@ void batch_r2c_3d(std::size_t batch, int depth, int height, int width, const flo
   const pf::stride_t ss{std::ptrdiff_t(out_dist * sizeof(std::complex<float>)),
                         checked_stride(height,k,sizeof(std::complex<float>)),
                         std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+#ifndef POCKETFFT_NO_VECTORS
+  if(dense_shape(depth,height,width)) {
+#if defined(NEO_FFT_HAS_AVX2_CODELET)
+    if(width==16) {
+      // Spatial codelets first, then the temporal axis. This is used only by
+      // grouped callers; single-volume threshold-sensitive paths stay generic.
+      for(std::size_t b=0;b<batch;++b)
+        codelet::batch_fft16x16_r2c(depth,in+b*in_dist,256,16,out+b*out_dist,144,9);
+      dense_axes_dispatch(batch,depth,height,out,out_dist,out,out_dist,true,false);
+      return;
+    }
+#endif
+    pf::r2c(shape,rs,ss,std::size_t(3),true,in,out,1.0f,1);
+    dense_axes_dispatch(batch,depth,height,out,out_dist,out,out_dist,true);
+    return;
+  }
+#endif
   pf::r2c(shape, rs, ss, axes, true, in, out, 1.0f, 1);
 }
 
@@ -422,6 +502,24 @@ void batch_c2r_3d(std::size_t batch, int depth, int height, int width, const std
   const pf::stride_t ss{std::ptrdiff_t(in_dist * sizeof(std::complex<float>)),
                         checked_stride(height,k,sizeof(std::complex<float>)),
                         std::ptrdiff_t(k * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+#ifndef POCKETFFT_NO_VECTORS
+  if(dense_shape(depth,height,width)) {
+    const auto bins=std::size_t(depth)*height*k;
+    pf::detail::arr<std::complex<float>> temporary(mul_size(batch,bins));
+#if defined(NEO_FFT_HAS_AVX2_CODELET)
+    if(width==16) {
+      dense_axes_dispatch(batch,depth,height,in,in_dist,temporary.data(),bins,false,false);
+      for(std::size_t b=0;b<batch;++b)
+        codelet::batch_fft16x16_c2r(depth,temporary.data()+b*bins,144,9,out+b*out_dist,256,16,fct);
+      return;
+    }
+#endif
+    dense_axes_dispatch(batch,depth,height,in,in_dist,temporary.data(),bins,false);
+    auto dense_stride=ss;dense_stride[0]=std::ptrdiff_t(bins*sizeof(std::complex<float>));
+    pf::c2r(shape,dense_stride,rs,std::size_t(3),false,temporary.data(),out,fct,1);
+    return;
+  }
+#endif
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
 } // namespace
