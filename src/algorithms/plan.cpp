@@ -543,25 +543,40 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
       if(temporal_ola_)for(int z=0;z<T_slots;++z)pad_dfttest_source(sources[std::size_t(time_block)*T_slots+z],ws.padded(z),geometry,format,model_);
       const int center=temporal_ola_ ? targets[time_block] : T_slots/2;
       const int capacity=ws.budget().batch_size;
+      // Only the linear Wiener branch uses grouped FFTs. Hard thresholds and
+      // nonlinear exponents can magnify FFT lane-grouping rounding differences.
+      const int fft_group=parameters.type==0 && std::abs(parameters.exponent-1.0f)<0.00005f ? 8 : 1;
       for(int by=0;by<gy.count;++by) {
         const int oy=by*gy.step;
         for(int first=0;first<gx.count;) {
           const int count=std::min(capacity,gx.count-first);
-          executor_->run(count,[&](int index) {
-            const int ox=(first+index)*gx.step;
-            float* block=ws.block(index).data();
-            for(int z=0;z<T_slots;++z) for(int y=0;y<gy.block;++y) {
-              const auto offset=std::size_t(z)*spatial_samples+std::size_t(y)*gx.block;
-              spatial_.gather_dfttest(ws.padded(z).row_ptr(oy+y)+ox,h_.data()+offset,block+offset,gx.block);
+          // Fixed FFT groups keep lane grouping independent of the worker count.
+          // Each group owns contiguous scratch; overlap-add still commits Y then X.
+          executor_->run((count+fft_group-1)/fft_group,[&](int group) {
+            const int begin=group*fft_group,end=std::min(begin+fft_group,count);
+            const auto active=std::size_t(end-begin);
+            for(int index=begin;index<end;++index) {
+              const int ox=(first+index)*gx.step;
+              float* block=ws.block(index).data();
+              for(int z=0;z<T_slots;++z) for(int y=0;y<gy.block;++y) {
+                const auto offset=std::size_t(z)*spatial_samples+std::size_t(y)*gx.block;
+                spatial_.gather_dfttest(ws.padded(z).row_ptr(oy+y)+ox,h_.data()+offset,block+offset,gx.block);
+              }
             }
-            auto* spectrum=ws.spectrum(index).data();
-            if(T_slots==1) fft.forward(block,spectrum);else fft3d_->forward(block,spectrum);
-            const float scale=grid_.empty() || (T_slots>1 && (mean_scale_==0 || grid_[0].real()==0))
-                ? 0 : (mean_scale_*spectrum[0].real())/grid_[0].real();
-            kernel_(spectrum,grid_.empty() ? nullptr : grid_.data(),bins,scale,parameters);
-            float* inverse=ws.inverse(index).data();
-            if(T_slots==1) fft.inverse(spectrum,inverse);else fft3d_->inverse(spectrum,inverse);
-            spatial_.validate_finite(inverse,spatial_samples*std::size_t(T_slots));
+            const auto samples=spatial_samples*std::size_t(T_slots);
+            const BatchLayout real{std::size_t(gx.block),samples,active,active};
+            const BatchLayout complex{std::size_t(fft.columns()),bins,active,active};
+            if(T_slots==1) fft.forward(ws.block(begin).data(),real,ws.spectrum(begin).data(),complex);
+            else fft3d_->forward(ws.block(begin).data(),active,samples,ws.spectrum(begin).data(),bins);
+            for(int index=begin;index<end;++index) {
+              auto* spectrum=ws.spectrum(index).data();
+              const float scale=grid_.empty() || (T_slots>1 && (mean_scale_==0 || grid_[0].real()==0))
+                  ? 0 : (mean_scale_*spectrum[0].real())/grid_[0].real();
+              kernel_(spectrum,grid_.empty() ? nullptr : grid_.data(),bins,scale,parameters);
+            }
+            if(T_slots==1) fft.inverse(ws.spectrum(begin).data(),complex,ws.inverse(begin).data(),real);
+            else fft3d_->inverse(ws.spectrum(begin).data(),active,bins,ws.inverse(begin).data(),samples);
+            spatial_.validate_finite(ws.inverse(begin).data(),active*samples);
           });
           for(int index=0;index<count;++index) {
             const int ox=(first+index)*gx.step;

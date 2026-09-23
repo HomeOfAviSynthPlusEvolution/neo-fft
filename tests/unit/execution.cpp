@@ -18,12 +18,14 @@ int main() {try {
   for(std::size_t i=0;i<input.size();++i)input[i]=float((i*37)%251)/255;
   span2d::Plane<const float> source(input.data(),192,128,192*4);
   span2d::Plane<float> dst_a(a.data(),192,128,192*4),dst_b(b.data(),192,128,192*4);
-  for(int T:{1,3}) for(int mode:{0,1}) {
-    DFTConfig c;c.block=mode ? 8 : 9;c.overlap=4;c.mode=mode;c.tbsize=T;c.opt=1;c.threads=1;
+  for(int T:{1,3,5}) for(int block:{8,9,12,16}) for(int opt:{0,1}) {
+    const int mode=block==9 ? 0 : 1;
+    DFTConfig c;c.block=block;c.overlap=block*3/4;c.mode=mode;c.tbsize=T;c.opt=opt;c.threads=1;
     Plan serial(192,128,{32,true,false},c);c.threads=3;Plan parallel(192,128,{32,true,false},c);
-    std::array<span2d::Plane<const float>,3> sources{source,source,source};
+    std::array<span2d::Plane<const float>,5> sources{source,source,source,source,source};
     serial.process({sources.data(),std::size_t(T)},dst_a);parallel.process({sources.data(),std::size_t(T)},dst_b);
-    CHECK(a==b);CHECK(parallel.executor().peak()>1 && parallel.executor().peak()<=3);
+    CHECK(a==b);CHECK(parallel.executor().peak()>=1 && parallel.executor().peak()<=3);
+    if(T==1 && block==8)CHECK(parallel.executor().peak()>1);
   }
   {
     using F=plugin::Filter<Algorithm::FFT3D>;

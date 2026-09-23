@@ -452,6 +452,33 @@ int main() {
       }
     }
 
+    // Grouped 3D calls: independent forward oracle, partial groups and stride guards.
+    for(int T:{3,5})for(int W:{4,5})for(int count:{0,1,7,8,9}) {
+      RealFFT3D transform(T,3,W);
+      const auto samples=transform.samples(),bins=transform.bins(),rd=samples+5,sd=bins+3;
+      std::vector<float> input(rd*10,-91),back(rd*10,-92);
+      const std::complex<float> sentinel{-93,94};
+      std::vector<std::complex<float>> spectrum(sd*10,sentinel);
+      for(int b=0;b<count;++b)for(std::size_t i=0;i<samples;++i)
+        input[b*rd+i]=float(int((i*17+b*7)%23)-11)/8.f;
+      const auto saved=input;
+      transform.forward(input.data(),count,rd,spectrum.data(),sd);
+      transform.inverse(spectrum.data(),count,sd,back.data(),rd);
+      CHECK(input==saved);
+      for(int b=0;b<count;++b) {
+        const auto oracle=direct_dft_3d(input.data()+b*rd,T,3,W);
+        for(std::size_t i=0;i<bins;++i) {
+          check_near(spectrum[b*sd+i].real(),oracle[i].real(),5e-5);
+          check_near(spectrum[b*sd+i].imag(),oracle[i].imag(),5e-5);
+        }
+        for(std::size_t i=0;i<samples;++i)check_near(back[b*rd+i],input[b*rd+i],5e-5);
+      }
+      for(int b=0;b<10;++b) {
+        for(std::size_t i=b<count ? samples : 0;i<rd;++i)CHECK(back[b*rd+i]==-92);
+        for(std::size_t i=b<count ? bins : 0;i<sd;++i)CHECK(spectrum[b*sd+i]==sentinel);
+      }
+    }
+
     // 3D impulse & constant checks
     {
       const int T = 3, H = 2, W = 4;
