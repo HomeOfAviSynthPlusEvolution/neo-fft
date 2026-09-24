@@ -542,9 +542,10 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
       if(temporal_ola_)for(int z=0;z<T_slots;++z)pad_dfttest_source(sources[std::size_t(time_block)*T_slots+z],ws.padded(z),geometry,format,model_);
       const int center=temporal_ola_ ? targets[time_block] : T_slots/2;
       const int capacity=ws.budget().batch_size;
-      // Only the linear Wiener branch uses grouped FFTs. Hard thresholds and
-      // nonlinear exponents can magnify FFT lane-grouping rounding differences.
-      const int fft_group=parameters.type==0 && std::abs(parameters.exponent-1.0f)<0.00005f ? 8 : 1;
+      // Wiener with unit exponent and direct gain use grouped FFTs. Hard thresholds
+      // and nonlinear exponents can magnify FFT lane-grouping rounding differences.
+      const int fft_group=parameters.type==2 ||
+          (parameters.type==0 && std::abs(parameters.exponent-1.0f)<0.00005f) ? 8 : 1;
       for(int by=0;by<gy.count;++by) {
         const int oy=by*gy.step;
         for(int first=0;first<gx.count;) {

@@ -569,6 +569,32 @@ template<class T> void dfttest_padding(SampleFormat format) {
   }
 }
 
+void dft_direct_gain() {
+  constexpr int width=128,height=64,stride=width+3;
+  for(int S:{8,16,32})for(int T:{3,5})for(int opt:{0,1})for(float gain:{0.0f,0.7f,1.25f}) {
+    DFTConfig c;
+    c.block=S;c.overlap=S/2;c.tbsize=T;c.ftype=2;c.sigma=gain;c.zmean=false;c.opt=opt;
+    Plan plan(width,height,{32,true,false},c);
+    std::vector<std::vector<float>> input(T,std::vector<float>(stride*height));
+    std::vector<span2d::Plane<const float>> sources;
+    for(int z=0;z<T;++z) {
+      for(int y=0;y<height;++y)for(int x=0;x<width;++x)
+        input[z][y*stride+x]=0.2f+float((x*7+y*11+z*17)%101)/255.0f;
+      sources.push_back(checked_plane(static_cast<const float*>(input[z].data()),width,height,
+                                     stride*sizeof(float),input[z].size()*sizeof(float)));
+    }
+    std::vector<float> output(stride*height,-99);
+    plan.process(span2d::Span<const span2d::Plane<const float>>(sources.data(),sources.size()),
+                 checked_plane(output.data(),width,height,stride*sizeof(float),output.size()*sizeof(float)));
+    // Constant spectral gain with no mean removal must scale the center frame,
+    // independently of FFT grouping, temporal neighbors and spatial overlap.
+    for(int y=0;y<height;++y)for(int x=0;x<stride;++x) {
+      if(x<width)check_near(output[y*stride+x],input[T/2][y*stride+x]*gain,2e-6);
+      else CHECK(output[y*stride+x]==-99);
+    }
+  }
+}
+
 int main() {
   try {
     dfttest_padding<std::uint8_t>({8,false,false});
@@ -583,6 +609,7 @@ int main() {
     windows();
     filters();
     temporal_plan_tests();
+    dft_direct_gain();
     filter_empty_planes_tests();
     identity<std::uint8_t>({8, false, false});
     identity<std::uint16_t>({10, false, true});
