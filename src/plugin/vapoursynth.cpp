@@ -64,7 +64,6 @@ void VS_CC info(const VSMap*, VSMap* out, void*, VSCore*, const VSAPI* api) {
   api->mapSetData(out, "target", spectral_target(0), -1, dtUtf8, maReplace);
   api->mapSetData(out, "fft", fft_profile_name(), -1, dtUtf8, maReplace);
   api->mapSetInt(out, "fft_lanes", fft_lanes(), maReplace);
-  api->mapSetInt(out, "fft_threads", 1, maReplace);
 }
 } // namespace
 } // namespace neo_fft::plugin
@@ -77,6 +76,6 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
   api->registerFunction("FFT3D", f3d.c_str(), "clip:vnode;", create<Algorithm::FFT3D>, nullptr, plugin);
   api->registerFunction("DFTTest", dft.c_str(), "clip:vnode;", create<Algorithm::DFTTest>, nullptr, plugin);
   api->registerFunction("KernelInfo", "",
-                        "fft_backend:data;target:data;fft_threads:int;fft:data:opt;fft_lanes:int:opt;", info, nullptr,
+                        "fft_backend:data;target:data;fft:data:opt;fft_lanes:int:opt;", info, nullptr,
                         plugin);
 }

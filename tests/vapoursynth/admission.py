@@ -127,6 +127,7 @@ def main():
                 infclip=c.std.ModifyFrame(floatclip,clips=floatclip,selector=infinite)
                 fails(lambda:call(infclip,planes=[0],**kwargs).get_frame(0),'non-finite')
     info=c.neo_fft.KernelInfo()
+    assert 'fft_threads' not in info
     print('VS admission, negative inputs, selected NaN errors, bitwise copies, properties passed:',info)
 
 if __name__=='__main__':main()

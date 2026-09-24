@@ -14,7 +14,7 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 | DFTTest threads | Reserved, default 0; any int32 accepted, <=0 normalizes to 1 and positive values clamp to 16; currently has no effect on execution or workspace retention |
 | fft_backend | PocketFFT required/default; unavailable explicit FFTW fails creation; no silent fallback |
 
-FFT3D ncpu and measure, and DFTTest fft_threads, have been removed by the user-directed interface cleanup. Supplying them fails creation, including historical defaults. No requested FFT-worker state is retained. KernelInfo's read-only fft_threads=1 still reports the backend's effective count; it is not a filter parameter.
+FFT3D ncpu and measure, and DFTTest fft_threads, have been removed by the user-directed interface cleanup. Supplying them fails creation, including historical defaults. No requested FFT-worker state is retained. KernelInfo also removes the fft_threads return field and its registered output signature; it reports backend/dispatch information without a thread-count field. DFTTest threads remains a reserved input parameter.
 
 opt aliases do not force a named instruction set or bypass runtime CPU capability checks. opt=1 controls own kernels, not the third-party FFT's ISA. Do not accidentally map historical opt=8 to a GPU backend.
 
