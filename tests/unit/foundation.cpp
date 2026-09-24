@@ -488,7 +488,7 @@ int main() {
     }
 
     // Common DFT volumes: native packed axes/codelets versus a binary64 DFT.
-    for(int T:{3,4,5})for(int S:{12,16}) {
+    for(int T:{3,4,5})for(int S:{8,12,16,32}) {
       const std::size_t samples=T*S*S,bins=T*S*(S/2+1),rd=samples+5,sd=bins+3;
       std::vector<float> input(rd*10,-91);
       for(int b=0;b<10;++b)for(std::size_t i=0;i<samples;++i)
@@ -508,7 +508,7 @@ int main() {
           std::vector<std::complex<float>> spectrum(sd*10,sentinel);
           transform.forward(input.data(),count,rd,spectrum.data(),sd);
           const auto original_spectrum=spectrum;
-          if(S==16 && count>1) {
+          if(S!=12 && count>1) {
             // Dense volumes may flatten their spatial batches across time;
             // compare with the strided path and protect both output boundaries.
             std::vector<float> dense_input(count*samples);
@@ -550,10 +550,10 @@ int main() {
             const bool used=transform.try_inverse_slice(slice,spectrum.data(),count,sd,selected.data()+1+center,rd);
             CHECK(spectrum==saved_spectrum);
 #if defined(NEO_FFT_HAS_AVX2_CODELET)
-            if(S==16 && count>1 && transform.lanes()>1 &&
+            if(S!=12 && count>1 && transform.lanes()>1 &&
                (profile==FftProfile::avx2 || profile==FftProfile::avx512))CHECK(used);
 #endif
-            if(count<=1 || S!=16 || profile==FftProfile::scalar || profile==FftProfile::sse2)CHECK(!used);
+            if(count<=1 || S==12 || profile==FftProfile::scalar || profile==FftProfile::sse2)CHECK(!used);
             CHECK(selected.front()==-96 && selected.back()==-96);
             for(int b=0;b<10;++b)for(std::size_t i=0;i<rd;++i) {
               if(used && b<count && i>=center && i<center+S*S)

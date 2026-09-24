@@ -539,26 +539,50 @@ pf::detail::cmplx<V> temporal_inverse_center(const pf::detail::cmplx<V>* v) {
   }
 }
 
-template<int N>
+template<int N,class V>
+pf::detail::cmplx<V> temporal_inverse_slice(pf::detail::cmplx<V>* values,int slice) {
+  if constexpr(N==3 || N==5)
+    if(slice==N/2)return temporal_inverse_center<N>(values);
+  temporal_butterfly<N,false>(values);
+  return values[slice];
+}
+
+template<int N,int S>
 void inverse_slice_spectra(int slice,std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
                             std::complex<float>* out) {
   namespace pd=pf::detail;
   constexpr auto lanes=pd::VLEN<float>::val;
   using Vec=pd::vtype_t<float>;
-  constexpr std::size_t bins=16*9;
-  static_assert(bins%lanes==0);
+  constexpr std::size_t bins=S*(S/2+1);
+  constexpr std::size_t vector_bins=bins/lanes*lanes;
   constexpr auto indices=std::make_index_sequence<lanes>{};
-  for(std::size_t b=0;b<batch;++b) for(std::size_t k=0;k<bins;k+=lanes) {
-    pd::cmplx<Vec> values[N];
-    for(int n=0;n<N;++n)values[n]=load_complex_vector(in+b*in_dist+n*bins+k,indices);
-    const auto result=[&] {
-      if constexpr(N==3 || N==5)
-        if(slice==N/2)return temporal_inverse_center<N>(values);
-      temporal_butterfly<N,false>(values);
-      return values[slice];
-    }();
-    store_complex_vector(out+b*bins+k,result,indices);
+  for(std::size_t b=0;b<batch;++b) {
+    for(std::size_t k=0;k<vector_bins;k+=lanes) {
+      pd::cmplx<Vec> values[N];
+      for(int n=0;n<N;++n)values[n]=load_complex_vector(in+b*in_dist+n*bins+k,indices);
+      store_complex_vector(out+b*bins+k,temporal_inverse_slice<N>(values,slice),indices);
+    }
+    // S=8 has 40 bins: AVX512 must not load through the temporal-plane boundary.
+    for(std::size_t k=vector_bins;k<bins;++k) {
+      pd::cmplx<float> values[N];
+      for(int n=0;n<N;++n) {
+        const auto v=in[b*in_dist+n*bins+k];values[n].Set(v.real(),v.imag());
+      }
+      const auto v=temporal_inverse_slice<N>(values,slice);
+      out[b*bins+k]={v.r,v.i};
+    }
   }
+}
+
+template<int S>
+void inverse_spatial_slice(int depth,int slice,std::size_t batch,const std::complex<float>* in,
+                            std::size_t in_dist,float* out,std::size_t out_dist,float fct) {
+  constexpr std::size_t bins=S*(S/2+1);
+  pf::detail::arr<std::complex<float>> selected(mul_size(batch,bins));
+  if(depth==3)inverse_slice_spectra<3,S>(slice,batch,in,in_dist,selected.data());
+  else if(depth==4)inverse_slice_spectra<4,S>(slice,batch,in,in_dist,selected.data());
+  else inverse_slice_spectra<5,S>(slice,batch,in,in_dist,selected.data());
+  batch_c2r(batch,S,S,selected.data(),bins,S/2+1,out,out_dist,S,fct);
 }
 #endif
 
@@ -572,19 +596,22 @@ void dense_axes(std::size_t batch,const std::complex<float>* in,std::size_t in_d
 }
 
 bool dense_shape(int depth,int height,int width) {
-  return (depth==3 || depth==4 || depth==5) && (height==12 || height==16) && width==height;
+  return (depth==3 || depth==4 || depth==5) &&
+      (height==8 || height==12 || height==16 || height==32) && width==height;
+}
+template<int S>
+void dense_axes_for_size(std::size_t batch,int depth,const std::complex<float>* in,
+                         std::size_t in_dist,std::complex<float>* out,std::size_t out_dist,bool forward,bool spatial) {
+  if(depth==3)dense_axes<3,S>(batch,in,in_dist,out,out_dist,forward,spatial);
+  else if(depth==4)dense_axes<4,S>(batch,in,in_dist,out,out_dist,forward,spatial);
+  else dense_axes<5,S>(batch,in,in_dist,out,out_dist,forward,spatial);
 }
 void dense_axes_dispatch(std::size_t batch,int depth,int size,const std::complex<float>* in,
                          std::size_t in_dist,std::complex<float>* out,std::size_t out_dist,bool forward,bool spatial=true) {
-  if(size==12) {
-    if(depth==3)dense_axes<3,12>(batch,in,in_dist,out,out_dist,forward,spatial);
-    else if(depth==4)dense_axes<4,12>(batch,in,in_dist,out,out_dist,forward,spatial);
-    else dense_axes<5,12>(batch,in,in_dist,out,out_dist,forward,spatial);
-  } else {
-    if(depth==3)dense_axes<3,16>(batch,in,in_dist,out,out_dist,forward,spatial);
-    else if(depth==4)dense_axes<4,16>(batch,in,in_dist,out,out_dist,forward,spatial);
-    else dense_axes<5,16>(batch,in,in_dist,out,out_dist,forward,spatial);
-  }
+  if(size==8)dense_axes_for_size<8>(batch,depth,in,in_dist,out,out_dist,forward,spatial);
+  else if(size==12)dense_axes_for_size<12>(batch,depth,in,in_dist,out,out_dist,forward,spatial);
+  else if(size==16)dense_axes_for_size<16>(batch,depth,in,in_dist,out,out_dist,forward,spatial);
+  else dense_axes_for_size<32>(batch,depth,in,in_dist,out,out_dist,forward,spatial);
 }
 #endif
 
@@ -607,14 +634,15 @@ void batch_r2c_3d(std::size_t batch, int depth, int height, int width, const flo
 #ifndef POCKETFFT_NO_VECTORS
   if(dense_shape(depth,height,width)) {
 #if defined(NEO_FFT_HAS_AVX2_CODELET)
-    if(width==16) {
+    if(width==8 || width==16 || width==32) {
       // Spatial codelets first, then the temporal axis. This is used only by
       // grouped callers; single-volume threshold-sensitive paths stay generic.
-      if(in_dist==std::size_t(depth)*256 && out_dist==std::size_t(depth)*144) {
+      const auto samples=std::size_t(height)*width,bins=std::size_t(height)*k;
+      if(in_dist==std::size_t(depth)*samples && out_dist==std::size_t(depth)*bins) {
         // Dense groups expose all spatial planes to the cross-block column FFT.
-        codelet::batch_fft16x16_r2c(mul_size(batch,std::size_t(depth)),in,256,16,out,144,9);
+        batch_r2c(mul_size(batch,std::size_t(depth)),height,width,in,samples,width,out,bins,k);
       } else for(std::size_t b=0;b<batch;++b)
-        codelet::batch_fft16x16_r2c(depth,in+b*in_dist,256,16,out+b*out_dist,144,9);
+        batch_r2c(depth,height,width,in+b*in_dist,samples,width,out+b*out_dist,bins,k);
       dense_axes_dispatch(batch,depth,height,out,out_dist,out,out_dist,true,false);
       return;
     }
@@ -648,10 +676,11 @@ void batch_c2r_3d(std::size_t batch, int depth, int height, int width, const std
     const auto bins=std::size_t(depth)*height*k;
     pf::detail::arr<std::complex<float>> temporary(mul_size(batch,bins));
 #if defined(NEO_FFT_HAS_AVX2_CODELET)
-    if(width==16) {
+    if(width==8 || width==16 || width==32) {
       dense_axes_dispatch(batch,depth,height,in,in_dist,temporary.data(),bins,false,false);
       for(std::size_t b=0;b<batch;++b)
-        codelet::batch_fft16x16_c2r(depth,temporary.data()+b*bins,144,9,out+b*out_dist,256,16,fct);
+        batch_c2r(depth,height,width,temporary.data()+b*bins,std::size_t(height)*k,k,
+                  out+b*out_dist,std::size_t(height)*width,width,fct);
       return;
     }
 #endif
@@ -668,13 +697,11 @@ bool try_c2r_3d_slice(std::size_t batch,int depth,int height,int width,int slice
                         const std::complex<float>* in,std::size_t in_dist,
                         float* out,std::size_t out_dist,float fct) {
 #if defined(NEO_FFT_HAS_AVX2_CODELET) && !defined(POCKETFFT_NO_VECTORS)
-  if(slice>=0 && slice<depth && batch>1 && (depth==3 || depth==4 || depth==5) && height==16 && width==16) {
+  if(slice>=0 && slice<depth && batch>1 && (depth==3 || depth==4 || depth==5) && height==width && (width==8 || width==16 || width==32)) {
     ScratchScope scope;
-    pf::detail::arr<std::complex<float>> selected(mul_size(batch,std::size_t(144)));
-    if(depth==3)inverse_slice_spectra<3>(slice,batch,in,in_dist,selected.data());
-    else if(depth==4)inverse_slice_spectra<4>(slice,batch,in,in_dist,selected.data());
-    else inverse_slice_spectra<5>(slice,batch,in,in_dist,selected.data());
-    codelet::batch_fft16x16_c2r(batch,selected.data(),144,9,out,out_dist,16,fct);
+    if(width==8)inverse_spatial_slice<8>(depth,slice,batch,in,in_dist,out,out_dist,fct);
+    else if(width==16)inverse_spatial_slice<16>(depth,slice,batch,in,in_dist,out,out_dist,fct);
+    else inverse_spatial_slice<32>(depth,slice,batch,in,in_dist,out,out_dist,fct);
     return true;
   }
 #else
