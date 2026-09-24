@@ -15,6 +15,8 @@ struct Adapter : Bridge<A> {
   static constexpr av::MtMode avs_mt_mode = av::MtMode::NiceFilter;
   static ds::FilterDescriptor descriptor(bool host_signature = false) {
     auto d = plugin::descriptor(A, host_signature);
+    for (auto name : {"y", "u", "v", "a"})
+      d.params.push_back({name, ds::ParamType::Integer, {}, false, false, false, true});
     for (auto& p : d.params) {
       p.avs_enabled = true;
       if (p.is_array)
@@ -43,12 +45,17 @@ template <Algorithm A>
 AVSValue __cdecl create(AVSValue args, void*, IScriptEnvironment* env) {
   return guarded(env, [&] {
     const auto d = Adapter<A>::descriptor();
-    // Compatibility-only trailing arguments are deliberately not accessed.
+    const auto public_descriptor = Adapter<A>::descriptor(true);
+    // Map consumed names across the signature-only execution controls. Their
+    // values are deliberately never accessed, even with legacy plane modes.
     // Match neo-mv: native arrays occupy one slot; a scalar is a one-element array.
     std::vector<AVSValue> values(d.params.size());
     for (std::size_t i = 0; i < values.size(); ++i) {
-      values[i] = args.IsArray() ? (i < std::size_t(args.ArraySize()) ? args[int(i)] : AVSValue())
-                                 : (i == 0 ? args : AVSValue());
+      const auto slot = std::find_if(public_descriptor.params.begin(), public_descriptor.params.end(),
+                                     [&](const auto& p) { return p.name == d.params[i].name; });
+      const int index = static_cast<int>(slot - public_descriptor.params.begin());
+      values[i] = args.IsArray() ? (index < args.ArraySize() ? args[index] : AVSValue())
+                                 : (index == 0 ? args : AVSValue());
       if constexpr (A == Algorithm::DFTTest) {
         if (accepts_dft_text_array(d.params[i].name) && values[i].IsString()) {
           std::vector<AVSValue> elements;

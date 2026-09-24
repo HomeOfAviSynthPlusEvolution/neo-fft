@@ -92,7 +92,30 @@ void unique_requests() {
   state.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},centered);
   check(0,{}, {0,1,2});
 }
+template<Algorithm A> void plane_admission() {
+  using F=plugin::Filter<A>;
+  ds::VideoInputInfo input{128,96,8,{ds::ColorFamily::Yuv,ds::SampleFormat::UInt8,4,1,1}};
+  ds::ParamValues params;
+  ds::VideoInitContext ctx;ctx.inputs={&input,1};ctx.params=&params;
+  auto ordinary=plugin::unwrap(F::init(ctx)).state;
+  CHECK(ordinary.plans[0] && ordinary.plans[1] && ordinary.plans[2] && !ordinary.plans[3]);
+  params.entries={{"y",2},{"u",2},{"v",2},{"a",2}};
+  // All-copy must not enter plan geometry/model setup, even with tiny planes.
+  input.width=input.height=4;
+  auto copied=plugin::unwrap(F::init(ctx)).state;
+  for(const auto& plan:copied.plans)CHECK(!plan);
+  CHECK(!copied.dft_noise && !copied.kalman && !copied.sampled);
+  std::vector<ds::VideoFrameRequest> requests;
+  ds::VideoRequestContext request{4,requests,{},&copied};
+  CHECK(F::request(request).has_value());
+  CHECK(requests.size()==1 && requests[0].frame_number==4);
+  input.width=128;input.height=96;
+  params.entries.push_back({"planes",std::vector<int>{3}});
+  auto alpha=plugin::unwrap(F::init(ctx)).state;
+  CHECK(alpha.plans[3] && !alpha.plans[0] && !alpha.plans[1] && !alpha.plans[2]);
+}
 int main(){try {
+  plane_admission<Algorithm::FFT3D>();plane_admission<Algorithm::DFTTest>();
   unique_fetches();
   unique_requests();
   for(bool sample:{false,true}) {

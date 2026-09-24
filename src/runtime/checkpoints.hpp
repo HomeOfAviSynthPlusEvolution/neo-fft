@@ -7,7 +7,7 @@ namespace neo_fft::runtime {
 struct Checkpoint {
   int frame = 0;
   std::size_t control_bytes = 0;
-  std::array<KalmanState,3> planes;
+  std::array<KalmanState,4> planes;
   std::size_t bytes() const {
     std::size_t n=add_size(sizeof(*this),control_bytes);
     for (const auto& p:planes) n=add_size(n,p.bytes()-sizeof(p));

@@ -135,6 +135,29 @@ struct Params {
     return std::vector<float>(v.begin(), v.end());
   }
 };
+// Legacy modes enter ParamValues only through the AviSynth descriptor. An
+// explicit modern selection takes precedence, including an empty array.
+inline std::array<bool, 4> select_planes(Params params, Algorithm algorithm, int plane_count) {
+  std::array<bool, 4> selected{};
+  if (params.present("planes")) {
+    const auto planes = params.integers("planes");
+    if (algorithm == Algorithm::FFT3D && planes.empty())
+      for (int p = 0; p < std::min(plane_count, 3); ++p) selected[p] = true;
+    for (auto p : planes) {
+      require(p >= 0 && p < plane_count, "planes index outside actual format");
+      selected[std::size_t(p)] = true;
+    }
+  } else {
+    constexpr const char* names[] = {"y", "u", "v", "a"};
+    for (int p = 0; p < 4; ++p) {
+      const int mode = params.integer(names[p], p == 3 ? 2 : 3);
+      require(mode >= 1 && mode <= 3, std::string(names[p]) + ": mode must be 1, 2 or 3");
+      // Mode 1 copies as well: never expose uninitialized output memory.
+      selected[p] = p < plane_count && mode == 3;
+    }
+  }
+  return selected;
+}
 inline FFT3DConfig fft3d_config(Params p) {
   FFT3DConfig c;
   c.bw = p.integer("bw", 32);

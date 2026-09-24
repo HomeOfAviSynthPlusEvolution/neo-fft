@@ -231,6 +231,13 @@ if(BUILD_TESTING AND NEO_FFT_BUILD_AVISYNTH)
           --opt ${opt} --work "${CMAKE_CURRENT_BINARY_DIR}/avisynth-tests/opt${opt}")
         set_tests_properties(avs.acceptance.opt${opt} PROPERTIES LABELS "spec;avisynth"
           RUN_SERIAL TRUE TIMEOUT 180)
+        add_test(NAME avs.planes.opt${opt} COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/avisynth/acceptance.py" --planes-only
+          --runner "$<TARGET_FILE:neo_fft_avs_runner>" --plugin "$<TARGET_FILE:neo_fft>"
+          --runtime "${NEO_FFT_AVISYNTH_RUNTIME}" --host-api "${_neo_fft_avs_host_api}"
+          --opt ${opt} --work "${CMAKE_CURRENT_BINARY_DIR}/avisynth-planes/opt${opt}")
+        set_tests_properties(avs.planes.opt${opt} PROPERTIES LABELS "spec;avisynth"
+          RUN_SERIAL TRUE TIMEOUT 180)
       endif()
     endforeach()
     unset(_neo_fft_avs_host_api)

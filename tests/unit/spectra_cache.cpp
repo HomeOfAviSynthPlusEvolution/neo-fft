@@ -6,7 +6,7 @@ using namespace neo_fft;
 using Cache=runtime::SpectraCache;
 
 void ownership() {
-  const std::array<std::size_t,3> bins{64000,32000,32000};
+  const std::array<std::size_t,4> bins{64000,32000,32000};
   Cache cache(bins,3,100,1,{3,3,3});
   const auto fill=[](std::complex<float>* dst){dst[0]={.25f,.5f};};
   auto a=cache.get(0,0,0,fill),b=cache.get(0,0,1,fill);
@@ -49,6 +49,20 @@ void ownership() {
   const auto before=resized.bytes();resized.inform_threads(1);
   CHECK(resized.bytes()==before);pins={};
   CHECK(resized.get(5,0,0,fill));CHECK(resized.bytes()==before/2);
+}
+
+void alpha_rows() {
+  Cache cache({8,0,0,8},3,3,1,{2,0,0,2});
+  auto registration=cache.register_request(0,2,{false,false,false,true});
+  const auto luma=cache.get(1,0,0,[](auto* data){data[0]={1,2};});
+  const auto alpha=cache.get(1,3,0,[](auto* data){data[0]={3,4};});
+  CHECK(luma && alpha && luma.get()!=alpha.get());
+  CHECK(cache.get(1,3,0,[](auto*){throw std::runtime_error("Alpha cache miss");}).get()==alpha.get());
+  registration->complete_row(3,0);
+  CHECK(cache.get(1,3,1,[](auto* data){data[0]={5,6};}));
+  CHECK(cache.stats().builds==3 && cache.stats().hits==1);
+  rejects([&]{cache.get(1,4,0,[](auto*){});});
+  rejects([&]{cache.get(1,3,2,[](auto*){});});
 }
 
 void registered_eviction() {
@@ -104,8 +118,8 @@ void staged_registration() {
     FFT3DConfig config;config.bt=bt;config.bw=config.bh=8;config.ow=config.oh=4;config.opt=1;
     state.temporal_size=bt;state.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},config);
     const auto& plan=*state.plans[0];
-    state.spectra=std::make_shared<Cache>(std::array<std::size_t,3>{std::size_t(plan.geometry.x.count)*plan.fft.bins(),0,0},
-        bt,10,1,std::array<int,3>{plan.geometry.y.count,0,0});
+    state.spectra=std::make_shared<Cache>(std::array<std::size_t,4>{std::size_t(plan.geometry.x.count)*plan.fft.bins(),0,0},
+        bt,10,1,std::array<int,4>{plan.geometry.y.count,0,0});
     for(int n:{0,5,10}) {
       {
         ds::StagedVideoRequest<F> request(n,state);
@@ -212,7 +226,7 @@ template<class T> void reconstruction(SampleFormat format) {
   }
 }
 int main() {try {
-  ownership();registered_eviction();staged_registration();publication(false);publication(true);
+  ownership();alpha_rows();registered_eviction();staged_registration();publication(false);publication(true);
   reconstruction<std::uint8_t>({8,false,false});
   reconstruction<std::uint16_t>({16,false,true});
   reconstruction<float>({32,true,true});

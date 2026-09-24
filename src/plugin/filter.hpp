@@ -16,8 +16,8 @@ struct Filter {
   static constexpr ds::HostRequirements host_requirements{true,0,0};
   struct State {
     ds::VideoInputInfo source;
-    std::array<std::shared_ptr<const Plan>, 3> plans{};
-    std::array<ROI, 3> rois{};
+    std::array<std::shared_ptr<const Plan>, 4> plans{};
+    std::array<ROI, 4> rois{};
     int temporal_size = 1;
     int temporal_mode = 0, temporal_overlap = 0;
     int pattern_frame = 0;
@@ -35,7 +35,7 @@ struct Filter {
     const auto& info = ctx.inputs[0];
     const auto& f = info.format;
     auto supported = ds::is_supported_video_format(f);
-    require(supported.has_value() && supported.value() && (f.plane_count == 1 || f.plane_count == 3),
+    require(supported.has_value() && supported.value() && (f.plane_count == 1 || f.plane_count == 3 || f.plane_count == 4),
             "unsupported planar sample format");
     ds::validate_frame_dimensions(f, info.width, info.height);
     require(info.num_frames > 0, "clip frame count must be positive");
@@ -51,19 +51,12 @@ struct Filter {
       for (const auto& location : config.locations) {
         require(location.frame <= info.num_frames-config.tbsize, "DFTTest sample interval outside clip");
         require(location.plane < f.plane_count, "DFTTest sample plane outside format");
-        const bool chroma = f.color_family == ds::ColorFamily::Yuv && location.plane > 0;
+        const bool chroma = f.color_family == ds::ColorFamily::Yuv && (location.plane == 1 || location.plane == 2);
         const int w=info.width >> (chroma ? f.subsampling_w : 0), h=info.height >> (chroma ? f.subsampling_h : 0);
         require(location.x <= w-config.block && location.y <= h-config.block, "DFTTest sample rectangle outside plane");
       }
     }
-    auto planes = params.integers("planes");
-    std::array<bool, 3> selected{};
-    if (!params.present("planes") || (A == Algorithm::FFT3D && planes.empty()))
-      selected.fill(true);
-    for (auto p : planes) {
-      require(p >= 0 && p < f.plane_count, "planes index outside actual format");
-      selected[std::size_t(p)] = true;
-    }
+    const auto selected = select_planes(params, A, f.plane_count);
     const int t_size = [&] {
       if constexpr (A == Algorithm::FFT3D)
         return std::max(1, config.bt);
@@ -78,7 +71,7 @@ struct Filter {
     for (int p = 0; p < f.plane_count; ++p)
       if (selected[p]) {
         try {
-          const bool chroma = f.color_family == ds::ColorFamily::Yuv && p > 0;
+          const bool chroma = f.color_family == ds::ColorFamily::Yuv && (p == 1 || p == 2);
           const int w = info.width >> (chroma ? f.subsampling_w : 0), h = info.height >> (chroma ? f.subsampling_h : 0);
           const SampleFormat sample_format{state.sample_bits,f.sample_format == ds::SampleFormat::Float32,chroma};
           if constexpr (A == Algorithm::DFTTest) {
@@ -94,8 +87,8 @@ struct Filter {
       }
     if constexpr (A == Algorithm::FFT3D) {
       state.pattern_frame = std::clamp(config.pframe, 0, info.num_frames-1);
-      std::array<std::size_t,3> bins{};
-      std::array<int,3> rows{};
+      std::array<std::size_t,4> bins{};
+      std::array<int,4> rows{};
       for(int p=0;p<f.plane_count;++p)if(const auto& plan=state.plans[p]) {
         bins[p]=mul_size(plan->geometry.x.count,plan->fft.bins());
         rows[p]=plan->geometry.y.count;
@@ -147,7 +140,7 @@ struct Filter {
   static void validate_source(const ds::VideoFrameView& frame,const State& state) {
     require(frame.format==state.source.format && frame.plane_count==state.source.format.plane_count,"frame format differs from plan");
     for(int p=0;p<frame.plane_count;++p) {
-      const bool chroma=state.source.format.color_family==ds::ColorFamily::Yuv && p>0;
+      const bool chroma=state.source.format.color_family==ds::ColorFamily::Yuv && (p==1 || p==2);
       require(frame.plane(p).width==(state.source.width>>(chroma ? state.source.format.subsampling_w:0)) &&
               frame.plane(p).height==(state.source.height>>(chroma ? state.source.format.subsampling_h:0)),"frame plane dimensions differ from plan");
     }
@@ -180,7 +173,7 @@ struct Filter {
       const auto source=unwrap(ctx.frames.get(0,r.pending));
       validate_source(source.frame,state);
       if(r.sample) {
-        std::array<runtime::PublishedModel::Model,3> candidates;
+        std::array<runtime::PublishedModel::Model,4> candidates;
         for(int p=0;p<state.source.format.plane_count;++p) if(state.plans[p] && state.plans[p]->needs_pattern_frame()) {
           const auto compute=[&](auto s) {candidates[p]=state.plans[p]->pattern_candidate(s);};
           const auto& view=source.frame.plane(p);
@@ -458,7 +451,7 @@ struct Filter {
           require(sample.frame.format == state.source.format && sample.frame.plane_count == state.source.format.plane_count,
                   "pattern frame format differs from plan");
           const auto& view = sample.frame.plane(p);
-          const bool chroma = state.source.format.color_family == ds::ColorFamily::Yuv && p > 0;
+          const bool chroma = state.source.format.color_family == ds::ColorFamily::Yuv && (p == 1 || p == 2);
           require(view.width == (state.source.width >> (chroma ? state.source.format.subsampling_w : 0)) &&
                   view.height == (state.source.height >> (chroma ? state.source.format.subsampling_h : 0)),
                   "pattern plane dimensions differ from plan");
@@ -476,7 +469,7 @@ struct Filter {
         require(sample.frame.format==state.source.format && sample.frame.plane_count==state.source.format.plane_count,
                 "sample frame format differs from plan");
         const auto& view=sample.frame.plane(location.plane);
-        const bool chroma=state.source.format.color_family==ds::ColorFamily::Yuv && location.plane>0;
+        const bool chroma=state.source.format.color_family==ds::ColorFamily::Yuv && (location.plane==1 || location.plane==2);
         require(view.width==(state.source.width >> (chroma ? state.source.format.subsampling_w : 0)) &&
                 view.height==(state.source.height >> (chroma ? state.source.format.subsampling_h : 0)), "sample plane dimensions differ from plan");
         const int S=state.dft_noise->block_size, bits=state.sample_bits;
@@ -489,7 +482,7 @@ struct Filter {
     }
     const auto process_plane = [&](int p) {
       const auto& d = ctx.dst.plane(p);
-      const bool chroma = state.source.format.color_family == ds::ColorFamily::Yuv && p > 0;
+      const bool chroma = state.source.format.color_family == ds::ColorFamily::Yuv && (p == 1 || p == 2);
       const int w = state.source.width >> (chroma ? state.source.format.subsampling_w : 0);
       const int h = state.source.height >> (chroma ? state.source.format.subsampling_h : 0);
       require(d.width == w && d.height == h, "frame plane dimensions differ from plan");
@@ -540,7 +533,7 @@ struct Bridge {
   static ds::FilterDescriptor descriptor() { return plugin::descriptor(A); }
   static bool accepts_video_format(const ds::VideoFormat& f) {
     auto v = ds::is_supported_video_format(f);
-    return v.has_value() && v.value() && (f.plane_count == 1 || f.plane_count == 3);
+    return v.has_value() && v.value() && (f.plane_count == 1 || f.plane_count == 3 || f.plane_count == 4);
   }
 };
 } // namespace neo_fft::plugin

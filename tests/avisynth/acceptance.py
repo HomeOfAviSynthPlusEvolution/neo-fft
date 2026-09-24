@@ -12,6 +12,7 @@ def main():
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--host-api", choices=("c", "cpp"), default="c")
     parser.add_argument("--opt", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--planes-only", action="store_true")
     args = parser.parse_args()
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -37,6 +38,11 @@ def main():
         return result.stdout
 
     opt = args.opt
+    if args.planes_only:
+        from planes import check_planes
+        check_planes(run, opt)
+        print(f"AviSynth plane selection: {count} cases passed (opt={opt})")
+        return
     run("registration", '''
 Assert(FunctionExists("neo_fft_FFT3D"))
 Assert(FunctionExists("neo_fft_DFTTest"))

@@ -33,9 +33,9 @@ public:
   // The cache must outlive registrations; no host calls occur under its mutex.
   class Request {
     friend class SpectraCache;
-    Request(SpectraCache& cache,int first,int last,std::array<bool,3> planes)
+    Request(SpectraCache& cache,int first,int last,std::array<bool,4> planes)
         :cache_(cache),first_(first),last_(last) {
-      for(int p=0;p<3;++p)next_row_[p]=planes[p] ? 0 : cache.rows_[p];
+      for(int p=0;p<4;++p)next_row_[p]=planes[p] ? 0 : cache.rows_[p];
     }
   public:
     Request(const Request&)=delete;
@@ -54,7 +54,7 @@ public:
   private:
     SpectraCache& cache_;
     int first_,last_;
-    std::array<int,3> next_row_{};
+    std::array<int,4> next_row_{};
     bool linked_=false;
     Request* previous_=nullptr;
     Request* next_=nullptr;
@@ -67,19 +67,19 @@ public:
     std::uint64_t registrations=0,active_requests=0,peak_requests=0;
     std::uint64_t evicted_needed_rows=0,evicted_consumers=0;
   };
-  SpectraCache(std::array<std::size_t,3> bins,int temporal,int frames=-1,int mb=default_mb,
-               std::array<int,3> rows={1,1,1})
+  SpectraCache(std::array<std::size_t,4> bins,int temporal,int frames=-1,int mb=default_mb,
+               std::array<int,4> rows={1,1,1,1})
       :bins_(bins),rows_(rows),temporal_(temporal),requested_frames_(frames),
        budget_(mul_size(std::size_t(mb==-1 ? default_mb : std::max(0,mb)),1024*1024)),
        index_(ControlAllocator<Item>(&node_bytes_)),frames_(ControlAllocator<FrameItem>(&frame_bytes_)) {
     require(frames>=-1 && mb>=-1,"FFT3D cache limits must be >= -1");
     require(temporal>=1 && temporal<=5,"invalid cache temporal size");
-    for(int p=0;p<3;++p) {
+    for(int p=0;p<4;++p) {
       require(rows_[p]>=0 && (!bins_[p] || rows_[p]>0),"invalid spectrum cache shape");
       payload_[p]=mul_size(bins_[p],sizeof(std::complex<float>));
     }
   }
-  std::unique_ptr<Request> register_request(int first,int last,std::array<bool,3> planes={true,true,true}) {
+  std::unique_ptr<Request> register_request(int first,int last,std::array<bool,4> planes={true,true,true,true}) {
     require(first>=0 && last>=first && last-first<temporal_,"invalid cache request interval");
     if(!budget_ || requested_frames_==0 || temporal_<=1)return {};
     auto request=std::unique_ptr<Request>(new Request(*this,first,last,planes));
@@ -108,7 +108,7 @@ public:
   // entry. Thus waiting for the same row cannot form dependency cycles.
   // Exhausted budgets fall back immediately, without waiting for lease release.
   template<class Build> Lease get(int frame,int plane,int row,Build&& build) {
-    require(frame>=0 && plane>=0 && plane<3 && row>=0 && row<rows_[plane],"invalid spectrum cache key");
+    require(frame>=0 && plane>=0 && plane<4 && row>=0 && row<rows_[plane],"invalid spectrum cache key");
     std::unique_lock<std::mutex> lock(mutex_);
     trim();++stats_.requests;stats_.requested_bins+=bins_[plane];
     const auto bypass=[&]() -> Lease {++stats_.bypasses;stats_.computed_bins+=bins_[plane];return {};};
@@ -232,11 +232,11 @@ private:
     return true;
   }
   void trim() {while(frames_.size()>limit() && evict_frame()) {}}
-  const std::array<std::size_t,3> bins_;
-  const std::array<int,3> rows_;
+  const std::array<std::size_t,4> bins_;
+  const std::array<int,4> rows_;
   const int temporal_,requested_frames_;
   const std::size_t budget_;
-  std::array<std::size_t,3> payload_{};
+  std::array<std::size_t,4> payload_{};
   std::size_t node_bytes_=0,frame_bytes_=0,used_=0;
   std::uint64_t age_=0;
   Stats stats_;

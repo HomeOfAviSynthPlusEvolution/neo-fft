@@ -19,7 +19,7 @@ int main() {try {
   }
   {
     using F=plugin::Filter<Algorithm::FFT3D>;
-    F::State state;state.source={192,128,1,{ds::ColorFamily::Rgb,ds::SampleFormat::Float32,3,0,0}};
+    F::State state;state.source={192,128,1,{ds::ColorFamily::Rgb,ds::SampleFormat::Float32,4,0,0}};
     state.retention=std::make_shared<runtime::Retention>(1);
     FFT3DConfig c;c.bw=c.bh=8;c.opt=1;
     Plan expected(192,128,{32,true,false},c);expected.process(source,dst_a);
@@ -27,10 +27,10 @@ int main() {try {
       ds::VideoFrameView view;
       ds::Result<ds::RequestedVideoFrame> get(int input,int n) override {return ds::Result<ds::RequestedVideoFrame>::success({input,n,view,{}});}
     } provider;
-    provider.view.format=state.source.format;provider.view.plane_count=3;
-    ds::MutableVideoFrameView output;output.format=state.source.format;output.plane_count=3;
-    std::array<std::vector<float>,3> pixels;
-    for(int p=0;p<3;++p) {
+    provider.view.format=state.source.format;provider.view.plane_count=4;
+    ds::MutableVideoFrameView output;output.format=state.source.format;output.plane_count=4;
+    std::array<std::vector<float>,4> pixels;
+    for(int p=0;p<4;++p) {
       state.plans[p]=std::make_shared<Plan>(192,128,SampleFormat{32,true,false},c,state.retention);
       state.rois[p]={0,0,192,128,false};provider.view.planes[p]={input.data(),192*4,192,128};
       pixels[p].resize(input.size());output.planes[p]={pixels[p].data(),192*4,192,128};
@@ -38,6 +38,15 @@ int main() {try {
     ds::VideoProcessContext ctx{0,provider,output,&state};F::process(ctx);
     for(const auto& plane:pixels)CHECK(plane==a);
     CHECK(state.retention->count()==1);
+    // Unselected Alpha preserves signed zero and NaN payloads without scanning.
+    std::vector<float> alpha(input.size());
+    for(std::size_t i=0;i<alpha.size();++i) {
+      const std::uint32_t bits=i%2 ? 0x7fc01234u : 0x80000000u;
+      std::memcpy(&alpha[i],&bits,sizeof(bits));
+    }
+    state.plans[3].reset();provider.view.planes[3].data=alpha.data();
+    CHECK(F::process(ctx).has_value());
+    CHECK(std::memcmp(alpha.data(),pixels[3].data(),alpha.size()*sizeof(float))==0);
   }
   {DFTConfig c;c.block=4;c.overlap=0;c.tbsize=3;c.swin=6;c.twin=7;c.zmean=true;
     // Existing admission rejects this degenerate template before processing.
