@@ -24,7 +24,7 @@ struct FftBackend {
                        std::complex<float>* out, std::size_t out_dist);
   void (*batch_c2r_3d)(std::size_t batch, int depth, int height, int width, const std::complex<float>* in, std::size_t in_dist,
                        float* out, std::size_t out_dist, float fct);
-  bool (*try_c2r_3d_center)(std::size_t batch, int depth, int height, int width,
+  bool (*try_c2r_3d_slice)(std::size_t batch, int depth, int height, int width, int slice,
                            const std::complex<float>* in, std::size_t in_dist,
                            float* out, std::size_t out_dist, float fct);
 };

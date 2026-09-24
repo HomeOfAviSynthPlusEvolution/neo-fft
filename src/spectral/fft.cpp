@@ -159,9 +159,9 @@ void RealFFT3D::inverse(const std::complex<float>* in, std::size_t batch, std::s
   backend_.batch_c2r_3d(batch, depth_, height_, width_, in, in_dist, out, out_dist, scale);
 }
 
-bool RealFFT3D::try_inverse_center(const std::complex<float>* in, std::size_t batch, std::size_t in_dist,
+bool RealFFT3D::try_inverse_slice(int slice, const std::complex<float>* in, std::size_t batch, std::size_t in_dist,
                                   float* out, std::size_t out_dist) const {
   const float scale = 1.0f / (float(depth_) * float(height_) * float(width_));
-  return backend_.try_c2r_3d_center(batch, depth_, height_, width_, in, in_dist, out, out_dist, scale);
+  return backend_.try_c2r_3d_slice(batch, depth_, height_, width_, slice, in, in_dist, out, out_dist, scale);
 }
 } // namespace neo_fft

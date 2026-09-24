@@ -403,6 +403,11 @@ void temporal_butterfly(pf::detail::cmplx<V>* v) {
     const auto center=v[0]-sum*0.5f;
     const auto side=rotate(difference*0.86602540378443864676f);
     v[0]=v[0]+sum;v[1]=center+side;v[2]=center-side;
+  } else if constexpr(N==4) {
+    const auto even_sum=v[0]+v[2],even_difference=v[0]-v[2];
+    const auto odd_sum=v[1]+v[3],odd_difference=rotate(v[1]-v[3]);
+    v[0]=even_sum+odd_sum;v[2]=even_sum-odd_sum;
+    v[1]=even_difference+odd_difference;v[3]=even_difference-odd_difference;
   } else {
     static_assert(N==5);
     const auto a=v[1]+v[4],b=v[2]+v[3],c=v[1]-v[4],d=v[2]-v[3];
@@ -535,7 +540,7 @@ pf::detail::cmplx<V> temporal_inverse_center(const pf::detail::cmplx<V>* v) {
 }
 
 template<int N>
-void inverse_center_spectra(std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
+void inverse_slice_spectra(int slice,std::size_t batch,const std::complex<float>* in,std::size_t in_dist,
                             std::complex<float>* out) {
   namespace pd=pf::detail;
   constexpr auto lanes=pd::VLEN<float>::val;
@@ -546,7 +551,12 @@ void inverse_center_spectra(std::size_t batch,const std::complex<float>* in,std:
   for(std::size_t b=0;b<batch;++b) for(std::size_t k=0;k<bins;k+=lanes) {
     pd::cmplx<Vec> values[N];
     for(int n=0;n<N;++n)values[n]=load_complex_vector(in+b*in_dist+n*bins+k,indices);
-    const auto result=temporal_inverse_center<N>(values);
+    const auto result=[&] {
+      if constexpr(N==3 || N==5)
+        if(slice==N/2)return temporal_inverse_center<N>(values);
+      temporal_butterfly<N,false>(values);
+      return values[slice];
+    }();
     store_complex_vector(out+b*bins+k,result,indices);
   }
 }
@@ -562,15 +572,17 @@ void dense_axes(std::size_t batch,const std::complex<float>* in,std::size_t in_d
 }
 
 bool dense_shape(int depth,int height,int width) {
-  return (depth==3 || depth==5) && (height==12 || height==16) && width==height;
+  return (depth==3 || depth==4 || depth==5) && (height==12 || height==16) && width==height;
 }
 void dense_axes_dispatch(std::size_t batch,int depth,int size,const std::complex<float>* in,
                          std::size_t in_dist,std::complex<float>* out,std::size_t out_dist,bool forward,bool spatial=true) {
   if(size==12) {
     if(depth==3)dense_axes<3,12>(batch,in,in_dist,out,out_dist,forward,spatial);
+    else if(depth==4)dense_axes<4,12>(batch,in,in_dist,out,out_dist,forward,spatial);
     else dense_axes<5,12>(batch,in,in_dist,out,out_dist,forward,spatial);
   } else {
     if(depth==3)dense_axes<3,16>(batch,in,in_dist,out,out_dist,forward,spatial);
+    else if(depth==4)dense_axes<4,16>(batch,in,in_dist,out,out_dist,forward,spatial);
     else dense_axes<5,16>(batch,in,in_dist,out,out_dist,forward,spatial);
   }
 }
@@ -652,20 +664,21 @@ void batch_c2r_3d(std::size_t batch, int depth, int height, int width, const std
   pf::c2r(shape, ss, rs, axes, false, in, out, fct, 1);
 }
 
-bool try_c2r_3d_center(std::size_t batch,int depth,int height,int width,
+bool try_c2r_3d_slice(std::size_t batch,int depth,int height,int width,int slice,
                         const std::complex<float>* in,std::size_t in_dist,
                         float* out,std::size_t out_dist,float fct) {
 #if defined(NEO_FFT_HAS_AVX2_CODELET) && !defined(POCKETFFT_NO_VECTORS)
-  if(batch>1 && (depth==3 || depth==5) && height==16 && width==16) {
+  if(slice>=0 && slice<depth && batch>1 && (depth==3 || depth==4 || depth==5) && height==16 && width==16) {
     ScratchScope scope;
-    pf::detail::arr<std::complex<float>> center(mul_size(batch,std::size_t(144)));
-    if(depth==3)inverse_center_spectra<3>(batch,in,in_dist,center.data());
-    else inverse_center_spectra<5>(batch,in,in_dist,center.data());
-    codelet::batch_fft16x16_c2r(batch,center.data(),144,9,out,out_dist,16,fct);
+    pf::detail::arr<std::complex<float>> selected(mul_size(batch,std::size_t(144)));
+    if(depth==3)inverse_slice_spectra<3>(slice,batch,in,in_dist,selected.data());
+    else if(depth==4)inverse_slice_spectra<4>(slice,batch,in,in_dist,selected.data());
+    else inverse_slice_spectra<5>(slice,batch,in,in_dist,selected.data());
+    codelet::batch_fft16x16_c2r(batch,selected.data(),144,9,out,out_dist,16,fct);
     return true;
   }
 #else
-  (void)batch;(void)depth;(void)height;(void)width;(void)in;(void)in_dist;
+  (void)slice;(void)batch;(void)depth;(void)height;(void)width;(void)in;(void)in_dist;
   (void)out;(void)out_dist;(void)fct;
 #endif
   return false;
@@ -674,7 +687,7 @@ bool try_c2r_3d_center(std::size_t batch,int depth,int height,int width,
 
 const FftBackend& BACKEND_FN() noexcept {
   static const FftBackend backend{int(pf::detail::VLEN<float>::val), BACKEND_NAME, r2c, c2r, batch_r2c, batch_c2r,
-                                  r2c_3d, c2r_3d, batch_r2c_3d, batch_c2r_3d, try_c2r_3d_center};
+                                  r2c_3d, c2r_3d, batch_r2c_3d, batch_c2r_3d, try_c2r_3d_slice};
   return backend;
 }
 

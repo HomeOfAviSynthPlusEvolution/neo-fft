@@ -573,10 +573,10 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
                   ? 0 : (mean_scale_*spectrum[0].real())/grid_[0].real();
               kernel_(spectrum,grid_.empty() ? nullptr : grid_.data(),bins,scale,parameters);
             }
-            const bool center_only=T_slots>1 && !temporal_ola_ &&
-                fft3d_->try_inverse_center(ws.spectrum(begin).data(),active,bins,
+            const bool slice_only=T_slots>1 &&
+                fft3d_->try_inverse_slice(center,ws.spectrum(begin).data(),active,bins,
                     ws.inverse(begin).data()+std::size_t(center)*spatial_samples,samples);
-            if(center_only) {
+            if(slice_only) {
               for(int index=begin;index<end;++index)
                 spatial_.validate_finite(ws.inverse(index).data()+std::size_t(center)*spatial_samples,spatial_samples);
             } else {
