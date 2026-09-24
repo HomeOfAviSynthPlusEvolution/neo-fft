@@ -1,6 +1,6 @@
 # FFT3D: phase-1 VS interface
 
-Historical phase-1 contract. For current thread controls and removed parameters, apply the later [execution-policy revision](../../phase-4/execution.md).
+Historical phase-1 contract. For current thread controls and removed parameters (including the fft_backend input), apply the later [execution-policy revision](../../phase-4/execution.md).
 
 Specification: F3D-VS-001. This document defines the phase-1 registration, parameter defaults, supported subset, validation and output behavior.
 

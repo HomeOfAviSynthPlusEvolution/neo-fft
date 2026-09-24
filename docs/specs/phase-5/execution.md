@@ -28,4 +28,4 @@ Under the revised phase-4 execution policy, all transforms run on the calling ho
 
 Checked arithmetic covers signed starts/slot endpoints, floor division, T*B*B, frequency extents, strides, job counts and byte capacities. Only convert a clamped, range-checked real frame index to the host index type. A near-INT_MAX n must not trigger a loop from A to n. Memory/time for one request scales with admitted geometry, T, sample tuples and active concurrency, not distance from the first frame.
 
-PocketFFT remains required and FFTW optional; original-reference execution may use FFTW without requiring a new production backend. Preserve all phase-4 thread/opt mappings. Performance testing may separately measure reuse benefits, but cannot justify changing block phase, reduction order, noise calibration or deterministic behavior.
+Production uses PocketFFT without a public backend selector; original-reference execution may use FFTW without requiring a new production backend. Preserve all phase-4 thread/opt mappings. Performance testing may separately measure reuse benefits, but cannot justify changing block phase, reduction order, noise calibration or deterministic behavior.

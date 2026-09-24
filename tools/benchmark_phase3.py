@@ -49,7 +49,7 @@ def main():
                               slocation=[0, 2, 1, 12], ftype=0)
             times, hashes = [], []
             for _ in range(a.trials):
-                node = getattr(c.neo_fft, algorithm)(src, opt=0, fft_backend='pocketfft', **params)
+                node = getattr(c.neo_fft, algorithm)(src, opt=0, **params)
                 node.get_frame(3)
                 start = time.perf_counter()
                 frames = [node.get_frame(n) for n in range(4, 12)]

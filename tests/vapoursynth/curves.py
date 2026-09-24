@@ -84,13 +84,13 @@ def main():
                     )
                     for variant in variants:
                         params = dict(tbsize=T, sbsize=S, sosize=S//2, ftype=ftype, sigma=lo,
-                                      planes=[0], zmean=(ftype % 2 == 0), fft_backend='pocketfft', **variant)
+                                      planes=[0], zmean=(ftype % 2 == 0), **variant)
                         if args.trace:
                             print(bits, family, T, S, pattern, ftype, variant, flush=True)
                         outputs = [call(clip, opt=opt, **params) for opt in (1, 0)]
                         # Reference dispatch is recorded separately; candidate always exercises both paths.
                         if reference:
-                            outputs.append(reference(clip, opt=args.reference_opt, **params))
+                            outputs.append(reference(clip, opt=args.reference_opt, fft_backend='pocketfft', **params))
                         order = [clip.num_frames-1, 0, clip.num_frames//2]
                         maximum = 0.0
                         for n in order:

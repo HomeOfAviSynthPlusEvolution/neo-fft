@@ -50,7 +50,7 @@ def main():
 
     for name,temporal in [('FFT3D','bt'),('DFTTest','tbsize')]:
         call=getattr(c.neo_fft,name)
-        for kwargs in [dict(fft_backend='fftw'),dict(fft_backend='gpu'),dict(planes=[-1]),dict(planes=[1]),
+        for kwargs in [dict(fft_backend='pocketfft'),dict(fft_backend='fftw'),dict(fft_backend='gpu'),dict(planes=[-1]),dict(planes=[1]),
                        dict(sigma=float('nan')),dict(sigma=float('inf')),dict(sigma=1e100),dict(opt=1<<40),dict(sigma=-1)]:
             fails(lambda:call(src,**{temporal:1},**kwargs))
         fails(lambda:call(src,**{temporal:1},sigma='wrong'))
@@ -128,6 +128,7 @@ def main():
                 fails(lambda:call(infclip,planes=[0],**kwargs).get_frame(0),'non-finite')
     info=c.neo_fft.KernelInfo()
     assert 'fft_threads' not in info
+    assert info['fft_backend']
     print('VS admission, negative inputs, selected NaN errors, bitwise copies, properties passed:',info)
 
 if __name__=='__main__':main()

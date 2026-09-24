@@ -70,9 +70,9 @@ def main():
     locations=[0,0,0,0,2,src.format.num_planes-1,1,1]
     for mean in (False,True):
      for ftype in (0,1):
-      kw=dict(tbsize=T,sbsize=S,sosize=S//2,ftype=ftype,zmean=mean,nlocation=locations,alpha=2,fft_backend='pocketfft')
+      kw=dict(tbsize=T,sbsize=S,sosize=S//2,ftype=ftype,zmean=mean,nlocation=locations,alpha=2)
       nodes=[call(src,opt=o,**kw) for o in (1,0)]
-      if ref:nodes.append(ref(src,opt=1,**kw))
+      if ref:nodes.append(ref(src,opt=1,fft_backend='pocketfft',**kw))
       err=0
       for n in (0,src.num_frames//2,src.num_frames-1):
        frames=[node.get_frame(n) for node in nodes]

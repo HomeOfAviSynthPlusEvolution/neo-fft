@@ -12,7 +12,7 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 | FFT3D cache_frames | Default -1: auto `bt + host_threads - 1`; 0 disables raw-frequency caching; positive int32 is a frame limit; values below -1 fail |
 | FFT3D cache_mb | Default 128 MiB; -1 selects the same default budget; 0 disables raw-frequency caching; positive int32 is a memory limit; values below -1 fail |
 | DFTTest threads | Reserved, default 0; any int32 accepted, <=0 normalizes to 1 and positive values clamp to 16; currently has no effect on execution or workspace retention |
-| fft_backend | PocketFFT required/default; unavailable explicit FFTW fails creation; no silent fallback |
+| FFT3D / DFTTest fft_backend | Input parameter removed; supplying any value, including pocketfft, fails creation. PocketFFT is fixed internally; KernelInfo retains the read-only fft_backend diagnostic |
 
 FFT3D ncpu and measure, and DFTTest fft_threads, have been removed by the user-directed interface cleanup. Supplying them fails creation, including historical defaults. No requested FFT-worker state is retained. KernelInfo also removes the fft_threads return field and its registered output signature; it reports backend/dispatch information without a thread-count field. DFTTest threads remains a reserved input parameter.
 

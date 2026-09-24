@@ -14,7 +14,6 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm) {
   if (algorithm == Algorithm::FFT3D) {
     add("sigma", P::Float);
     add("beta", P::Float);
-    add("fft_backend", P::String);
     add("planes", P::Integer, true);
     for (auto n : {"bw", "bh", "bt", "ow", "oh"})
       add(n);
@@ -49,7 +48,6 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm) {
     add("planes", P::Integer, true);
     for (auto n : {"opt", "threads"})
       add(n);
-    add("fft_backend", P::String);
   }
   return d;
 }
@@ -111,10 +109,6 @@ struct Params {
   void same(const char* n, int d) const { require(integer(n, d) == d, std::string("unsupported phase-1 ") + n); }
   void same(const char* n, float d) const { require(number(n, d) == d, std::string("unsupported phase-1 ") + n); }
   void off(const char* n) const { require(!boolean(n, false), std::string("unsupported phase-1 ") + n); }
-  void backend() const {
-    require(unwrap(values.get_string("fft_backend", "pocketfft")) == "pocketfft",
-            "unsupported fft_backend: only pocketfft is built");
-  }
   std::vector<std::int64_t> integers(const char* n) const {
     auto v = unwrap(values.get_int_array(n, {}));
     for (auto x : v)
@@ -164,7 +158,6 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.ht = p.number("ht", 50.0f);
   c.cache_frames=p.integer("cache_frames",-1);
   c.cache_mb=p.integer("cache_mb",runtime::SpectraCache::default_mb);
-  p.backend();
   validate(c);
   return c;
 }
@@ -203,7 +196,6 @@ inline DFTConfig dft_config(Params p) {
   c.dither_seed=p.integer("dither_seed",0);
   // Reserved: retain the accepted domain and normalization, without scheduling workers.
   c.threads=std::clamp(p.integer("threads",0),1,16);
-  p.backend();
   validate(c);
   return c;
 }

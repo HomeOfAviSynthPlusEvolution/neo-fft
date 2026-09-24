@@ -84,9 +84,9 @@ def main():
     for bt in (1,2,3,4,5):
      for degrid in (0,1):
       # Reference equality is specified at pfactor=1 only.
-      kw=dict(bw=W,bh=H,ow=W//2,oh=H//2,bt=bt,pfactor=1,pframe=2,px=1,py=1,degrid=degrid,sharpen=.3,dehalo=.2,fft_backend='pocketfft')
+      kw=dict(bw=W,bh=H,ow=W//2,oh=H//2,bt=bt,pfactor=1,pframe=2,px=1,py=1,degrid=degrid,sharpen=.3,dehalo=.2)
       nodes=[c.neo_fft.FFT3D(src,opt=o,**kw) for o in (1,0)]
-      if a.fft_reference:nodes.append(c.neo_fft3d.FFT3D(src,opt=0,**kw))
+      if a.fft_reference:nodes.append(c.neo_fft3d.FFT3D(src,opt=0,fft_backend='pocketfft',**kw))
       compare(nodes,src,inputs,(3,0,6),range(src.format.num_planes),('FFT3D',bits,family,W,H,pattern,bt,degrid))
   # Curves on chroma as well as luma, both mean settings and plane selections.
   for T,S in ((3,5),(5,8),(15,3)):
@@ -96,18 +96,18 @@ def main():
      for system in (0,1):
       selected=[src.format.num_planes-1] if system else list(range(src.format.num_planes))
       lo,hi=(2,12) if ftype<2 else (.25,.8)
-      kw=dict(tbsize=T,sbsize=S,sosize=S//2,ftype=ftype,slocation=[0,lo,1,hi],ssystem=system,zmean=mean,planes=selected,fft_backend='pocketfft')
+      kw=dict(tbsize=T,sbsize=S,sosize=S//2,ftype=ftype,slocation=[0,lo,1,hi],ssystem=system,zmean=mean,planes=selected)
       nodes=[c.neo_fft.DFTTest(src,opt=o,**kw) for o in (1,0)]
-      if a.dft_reference:nodes.append(c.neo_dfttest.DFTTest(src,opt=1,**kw))
+      if a.dft_reference:nodes.append(c.neo_dfttest.DFTTest(src,opt=1,fft_backend='pocketfft',**kw))
       compare(nodes,src,inputs,(T//2,0,T+1),selected,('DFTTest',bits,family,T,S,mean,ftype,system))
  # Fresh reference preview instances avoid legacy mutable-window history.
  for bits in (16,32):
   src,inputs,_=source(vs,dict(format='rgb',bits=bits,width=64,height=48,frames=7,pattern=6),53)
   for auto in (False,True):
    for n in (0,3,6):
-    kw=dict(bw=8,bh=8,ow=4,oh=4,bt=5,pfactor=1,pshow=True,px=0 if auto else 1,py=0 if auto else 1,fft_backend='pocketfft')
+    kw=dict(bw=8,bh=8,ow=4,oh=4,bt=5,pfactor=1,pshow=True,px=0 if auto else 1,py=0 if auto else 1)
     nodes=[c.neo_fft.FFT3D(src,opt=o,**kw) for o in (1,0)]
-    if a.fft_reference:nodes.append(c.neo_fft3d.FFT3D(src,opt=0,**kw))
+    if a.fft_reference:nodes.append(c.neo_fft3d.FFT3D(src,opt=0,fft_backend='pocketfft',**kw))
     compare(nodes,src,inputs,(n,),range(3),('preview',bits,auto,n))
  if a.report:
   def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest() if path else None

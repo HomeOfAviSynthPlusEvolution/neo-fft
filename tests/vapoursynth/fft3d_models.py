@@ -33,10 +33,10 @@ def main():
     for bt in (-1,1,2,3,4,5):
      for vary in (False,True):
       for enhance in ({},dict(sharpen=.4),dict(dehalo=.2),dict(sharpen=.4,dehalo=.2)):
-       kw=dict(bt=bt,bw=W,bh=H,ow=W//2,oh=H//2,sigma=2,degrid=1,fft_backend='pocketfft',**enhance)
+       kw=dict(bt=bt,bw=W,bh=H,ow=W//2,oh=H//2,sigma=2,degrid=1,**enhance)
        if vary: kw.update(sigma2=3,sigma3=4,sigma4=5)
        clips=[call(src,opt=opt,**kw) for opt in (1,0)]
-       if ref: clips.append(ref(src,opt=0,**kw))
+       if ref: clips.append(ref(src,opt=0,fft_backend='pocketfft',**kw))
        maxerr=0
        for n in (0,3,6):
         frames=[clip.get_frame(n) for clip in clips]
