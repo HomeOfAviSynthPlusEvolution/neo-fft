@@ -76,6 +76,37 @@ void run_tests() {
       check_shared(c.data,sc.data,n);check_shared(q.data,sq.data,n);
     }
   }
+  // Minimized numerical cases from the RGB16/float threshold investigation.
+  // Golden states come from independently rounded binary32 steps, not the
+  // reference plugin. Constants also catch contraction in both compiled oracles.
+  struct ThresholdCase {Z x,last;float c,q,r;Z expected;float expected_c,expected_q;};
+  const ThresholdCase thresholds[]={
+    {{-22355.f,1088.8779296875f},{10412.9765625f,-14584.216796875f},
+      178956960.f,119304656.f,268435456.f,{-6833.32763671875f,-6335.21923828125f},141281824.f,74358856.f},
+    // The squared real difference equals R*4: equality must smooth.
+    {{0.4257414937019348f,-0.22678810358047485f},{-0.07621931284666061f,0.021932702511548996f},
+      0.020350884646177292f,0.006574865896254778f,0.06299116462469101f,
+      {0.07409356534481049f,-0.05254710465669632f},0.01886279508471489f,0.005648490972816944f},
+    // Moving X.re up two representable values crosses the threshold; reset both.
+    {{0.4257415533065796f,-0.22678810358047485f},{-0.07621931284666061f,0.021932702511548996f},
+      0.020350884646177292f,0.006574865896254778f,0.06299116462469101f,
+      {0.4257415533065796f,-0.22678810358047485f},0.06299116462469101f,0.06299116462469101f},
+    // Fusing the final multiply/add changes the imaginary result by one ULP.
+    {{-381535.1875f,-69576.8671875f},{-357165.21875f,-62999.546875f},
+      268435456.f,268435456.f,268435456.f,{-373411.875f,-67384.421875f},178956960.f,119304656.f}
+  };
+  for(const auto& t:thresholds) for(bool table:{false,true}) for(auto step:{kernel,select_kalman(1)}) {
+    constexpr int n=33; // Full SIMD vectors and a logical tail at the guard page.
+    Guard<Z> x(n),last(n);Guard<float> c(n),q(n),pattern(n);
+    std::fill_n(x.data,n,t.x);std::fill_n(last.data,n,t.last);
+    std::fill_n(c.data,n,t.c);std::fill_n(q.data,n,t.q);std::fill_n(pattern.data,n,t.r);
+    step(x.data,last.data,c.data,q.data,table ? pattern.data:nullptr,t.r,4.f,n);
+    for(int i=0;i<n;++i) {
+      CHECK(std::memcmp(last.data+i,&t.expected,sizeof(Z))==0);
+      CHECK(std::memcmp(c.data+i,&t.expected_c,sizeof(float))==0);
+      CHECK(std::memcmp(q.data+i,&t.expected_q,sizeof(float))==0);
+    }
+  }
   for(auto kernel:{select_kalman(0),select_kalman(1)}) {
     const int n=33;Z x[n],l[n];float c[n],q[n],pattern[n];
     for(int bad=0;bad<n;++bad) {
