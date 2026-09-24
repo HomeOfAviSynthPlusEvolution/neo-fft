@@ -1,6 +1,11 @@
 #include "plugin/avs_strings.hpp"
 #include "../test.hpp"
+#include <cerrno>
+#include <cfenv>
+#include <clocale>
 #include <limits>
+#include <locale>
+#include <utility>
 
 using namespace neo_fft::plugin::avs;
 
@@ -47,15 +52,45 @@ int main() {
     for (const char* name : {"nlocation", "slocation", "ssx", "ssy", "sst"})
       CHECK(accepts_dft_text_array(name));
     CHECK(!accepts_dft_text_array("planes"));
-    // Exercise the older-libc++ conversion fallback even on libraries that
-    // provide floating from_chars; both paths keep the same lexical contract.
-    for (const char* token : {"0", "-0", "+.5", "1.", "2.5e+1", "1E-2", "1e-300", "1e300",
-                              "4.9406564584124654e-324", "2.2250738585072014e-308"})
-      CHECK((parse_number_token<double, false>("sst", token) == parse_number_token<double>("sst", token)));
-    for (const char* token : {"0x1p2", "1e+", ".", "nan", "inf", "1e999", "1e-999", "1,5"}) {
-      rejects([&] { parse_number_token<double>("sst", token); });
-      rejects([&] { parse_number_token<double, false>("sst", token); });
+    // Run this same suite in both the selected and forced-fallback executables.
+    CHECK(std::signbit(parse_number_token<double>("sst", "-0")));
+    CHECK(!std::signbit(parse_number_token<double>("sst", "+0")));
+    CHECK(parse_number_token<double>("sst", "0e9999") == 0);
+    CHECK(parse_number_token<double>("sst", "0e-9999") == 0);
+    for (const auto& sample : std::vector<std::pair<const char*, double>>{
+           {"1e-300", 1e-300}, {"1e300", 1e300},
+           {"4.9406564584124654e-324", std::numeric_limits<double>::denorm_min()},
+           {"2.2250738585072014e-308", std::numeric_limits<double>::min()},
+           {"1.7976931348623157e308", std::numeric_limits<double>::max()}}) {
+      errno = EDOM;
+      CHECK(parse_number_token<double>("sst", sample.first) == sample.second);
+      CHECK(errno == EDOM);
     }
+    for (const char* token : {"0x1p2", "1e+", ".", "nan", "inf", "1e999", "1e-999", "1,5"}) {
+      errno = EDOM;
+      rejects([&] { parse_number_token<double>("sst", token); });
+      CHECK(errno == EDOM);
+    }
+    rejects([&] { parse_number_token<double>("sst", std::string_view("1\0.5", 4)); });
+    const int rounding = std::fegetround();
+    for (const int mode : {FE_DOWNWARD, FE_UPWARD}) {
+      CHECK(std::fesetround(mode) == 0);
+      rejects([&] { parse_number_token<double>("sst", "1e999"); });
+      rejects([&] { parse_number_token<double>("sst", "-1e999"); });
+    }
+    CHECK(std::fesetround(rounding) == 0);
+    // Use a non-C process locale when installed, without requiring one on CI.
+    const std::string c_locale = std::setlocale(LC_NUMERIC, nullptr);
+    bool tested_c_locale = false;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "German_Germany.1252"}) {
+      if (!std::setlocale(LC_NUMERIC, name)) continue;
+      CHECK(parse_number_token<double>("sst", "1.5") == 1.5);
+      rejects([&] { parse_number_token<double>("sst", "1,5"); });
+      tested_c_locale = true;
+      break;
+    }
+    CHECK(std::setlocale(LC_NUMERIC, c_locale.c_str()) != nullptr);
+    if (!tested_c_locale) std::cout << "Non-C process locale unavailable; locale-specific check skipped\n";
     std::cout << "AVS numeric strings: strict tokens, bounds and locale passed\n";
     return 0;
   } catch (const std::exception& error) {

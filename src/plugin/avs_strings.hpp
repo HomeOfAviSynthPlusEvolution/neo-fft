@@ -1,13 +1,10 @@
 #pragma once
 #include <charconv>
 #include <cmath>
-#include <locale>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 namespace neo_fft::plugin::avs {
@@ -41,38 +38,24 @@ inline bool decimal_token(std::string_view token, bool floating) noexcept {
   return i == token.size();
 }
 
-template<class T, class = void>
-struct HasFromChars : std::false_type {};
-template<class T>
-struct HasFromChars<T, std::void_t<decltype(std::from_chars(
-    std::declval<const char*>(), std::declval<const char*>(), std::declval<T&>()))>> : std::true_type {};
+// Takes a validated decimal_token; an unavailable floating overload is never compiled.
+bool parse_double_token(std::string_view token, double& value);
 
-template<class T, bool UseFromChars = HasFromChars<T>::value>
+template<class T>
 T parse_number_token(const char* name, std::string_view token) {
+  static_assert(std::is_same_v<T, int> || std::is_same_v<T, double>);
   const auto invalid = [&] {
     return std::invalid_argument(std::string("DFTTest ") + name + ": invalid decimal string token");
   };
   if (!decimal_token(token, std::is_floating_point_v<T>)) throw invalid();
   T value{};
-  if constexpr (UseFromChars) {
+  if constexpr (std::is_same_v<T, int>) {
     // from_chars does not accept a leading '+'. Syntax was checked above.
     if (token.front() == '+') token.remove_prefix(1);
     const auto result = std::from_chars(token.data(), token.data() + token.size(), value);
     if (result.ec != std::errc{} || result.ptr != token.data() + token.size()) throw invalid();
   } else {
-    // Older libc++ has integer from_chars but no floating-point overload.
-    std::istringstream number{std::string(token)};
-    number.imbue(std::locale::classic());
-    number >> std::noskipws >> value;
-    if (!number || number.peek() != std::char_traits<char>::eof()) throw invalid();
-    // Some streams silently round underflow to zero; match from_chars' error.
-    if (value == 0) {
-      const auto mantissa = token.substr(0, token.find_first_of("eE"));
-      if (mantissa.find_first_of("123456789") != std::string_view::npos) throw invalid();
-    }
-  }
-  if constexpr (std::is_floating_point_v<T>) {
-    if (!std::isfinite(value)) throw invalid();
+    if (!parse_double_token(token, value)) throw invalid();
   }
   return value;
 }
