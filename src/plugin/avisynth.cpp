@@ -1,4 +1,5 @@
 #include "plugin/filter.hpp"
+#include "plugin/avs_strings.hpp"
 #include <avisynth.h>
 #include <dualsynth/avisynth/video_bridge.hpp>
 
@@ -47,6 +48,22 @@ AVSValue __cdecl create(AVSValue args, void*, IScriptEnvironment* env) {
     for (std::size_t i = 0; i < values.size(); ++i) {
       values[i] = args.IsArray() ? (i < std::size_t(args.ArraySize()) ? args[int(i)] : AVSValue())
                                  : (i == 0 ? args : AVSValue());
+      if constexpr (A == Algorithm::DFTTest) {
+        if (accepts_dft_text_array(d.params[i].name) && values[i].IsString()) {
+          std::vector<AVSValue> elements;
+          const auto append = [&](const auto& numbers) {
+            require(numbers.size() <= INT32_MAX, d.params[i].name + ": too many string elements");
+            elements.reserve(numbers.size());
+            for (const auto value : numbers)
+              elements.emplace_back(value);
+          };
+          if (d.params[i].type == ds::ParamType::Integer)
+            append(parse_number_list<int>(d.params[i].name.c_str(), values[i].AsString()));
+          else
+            append(parse_number_list<double>(d.params[i].name.c_str(), values[i].AsString()));
+          values[i] = AVSValue(elements.data(), static_cast<int>(elements.size()));
+        }
+      }
       if (d.params[i].is_array && values[i].Defined() && !values[i].IsArray()) {
         const AVSValue scalar = values[i];
         values[i] = AVSValue(&scalar, 1);

@@ -62,6 +62,31 @@ return c
     }
     for name, expression in variants.items():
         run(name, "return " + expression + ".Prefetch(4)")
+    # String parsing is an AVS adapter feature; both forms must feed identical
+    # numeric arrays to the shared core, on spatially and temporally varying data.
+    string_pairs = {
+        "shared": ('slocation=[0,0.25,1,0.75]', 'slocation="0 +.25 1 7.5e-1"'),
+        "axes": ('ssx=[0,0.5,1,2],ssy=[0,1,1,3],sst=[0,2,1,4]',
+                 'ssx="0 .5 1 2",ssy="0 1 1 3",sst="0 2 1 4"'),
+        "mixed": ('ssx=[0,0.5,1,2],ssy=[0,1,1,3]', 'ssx="0 .5 1 2",ssy=[0,1,1,3]'),
+        "sample": ('nlocation=[0,0,0,0,2,1,2,4]', 'nlocation="+0 0 0 0 2 1 2 4"'),
+        "empty": ('nlocation=[],slocation=[],ssx=[],ssy=[],sst=[]',
+                  'nlocation="",slocation=" ",ssx="",ssy="",sst=""'),
+        "whitespace": ('slocation=[0,0.25,1,0.75]',
+                       'slocation=" 0"+Chr(9)+".25"+Chr(13)+Chr(10)+"1 .75 "'),
+    }
+    for pixel, convert in (("u8", ""), ("u16", ".ConvertBits(16)"), ("float", ".ConvertBits(32)")):
+        setup = ('c=ColorBars(width=128,height=96).ConvertToYV12().Trim(0,3)\n'
+                 'c=(c+c.Invert())' + convert + '\n')
+        for name, (array_args, text_args) in string_pairs.items():
+            body = f'''global expected=neo_fft_DFTTest(c,{array_args},opt={opt})
+o=neo_fft_DFTTest(c,{text_args},opt={opt})
+return o.ScriptClip("""Assert(LumaDifference(last,expected)==0)
+Assert(ChromaUDifference(last,expected)==0 && ChromaVDifference(last,expected)==0)
+last""").Prefetch(4)
+'''
+            for frame in (0, 4, 7):
+                run(f"string-{pixel}-{name}-{frame}", body, prefix=setup, frame=frame)
     for pixel in ("Y8", "YUV420P10", "YUV420P16", "Y32", "YUV444PS", "RGBP", "RGBPS"):
         setup = f'c=BlankClip(width=128,height=96,length=8,pixel_type="{pixel}")\n'
         for function in ("FFT3D", "DFTTest"):
@@ -113,6 +138,21 @@ last""").Prefetch(4)
         ('neo_fft_DFTTest(c,slocation=[0,1,0,2])', 'curve'),
         ('neo_fft_DFTTest(c,tbsize=4)', 'odd'),
         ('neo_fft_FFT3D(c,cache_mb=-2)', 'cache'),
+        ('neo_fft_DFTTest(c,nlocation="0 0 0 1.5")', 'nlocation'),
+        ('neo_fft_DFTTest(c,nlocation="0 0 0 2147483648")', 'nlocation'),
+        ('neo_fft_DFTTest(c,nlocation="0 0 0")', 'quadruples'),
+        ('neo_fft_DFTTest(c,nlocation="0 0 0 -1")', 'negative sample'),
+        ('neo_fft_DFTTest(c,slocation="0 1 1")', 'pairs'),
+        ('neo_fft_DFTTest(c,slocation="0 1 0 2")', 'curve'),
+        ('neo_fft_DFTTest(c,slocation="0 1 1 1e39")', 'float'),
+        ('neo_fft_DFTTest(c,slocation="0 1 1 NaN")', 'slocation'),
+        ('neo_fft_DFTTest(c,slocation="0 1 1 inf")', 'slocation'),
+        ('neo_fft_DFTTest(c,slocation="0 1 1 0x1p2")', 'slocation'),
+        ('neo_fft_DFTTest(c,ssx="0 1 1 2junk")', 'ssx'),
+        ('neo_fft_DFTTest(c,ssy="0,1,1,2")', 'ssy'),
+        ('neo_fft_DFTTest(c,sst="0:1 1:2")', 'sst'),
+        ('neo_fft_DFTTest(c,slocation="0 1 1 2",ssx="bad")', 'ssx'),
+        ('neo_fft_DFTTest(c,planes="0")', 'integer'),
     ]
     for index, (expression, error) in enumerate(invalid):
         run(f"invalid-{index}", "return " + expression, error=error)
