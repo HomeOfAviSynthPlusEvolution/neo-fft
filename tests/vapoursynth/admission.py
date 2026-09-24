@@ -14,6 +14,7 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--plugin',type=Path,required=True);args=p.parse_args()
     policy=environment(vs); c=vs.core;c.num_threads=4
     c.std.LoadPlugin(path=str(args.plugin.resolve()))
+    assert c.neo_fft.identifier == 'org.neofilters.neo_fft'
     src=c.std.BlankClip(width=128,height=96,format=vs.GRAY8,color=[128])
     # A finite spectrum can overflow inside inverse FFT before normalization.
     # Every backend must either produce finite values or reject the request.

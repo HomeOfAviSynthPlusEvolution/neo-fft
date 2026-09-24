@@ -11,7 +11,7 @@
       "name": "core",
       "inherits": "release",
       "binaryDir": "${sourceDir}/build/core",
-      "cacheVariables": {"NEO_FFT_BUILD_VAPOURSYNTH": "OFF"}
+      "cacheVariables": {"NEO_FFT_BUILD_VAPOURSYNTH": "OFF", "NEO_FFT_BUILD_AVISYNTH": "OFF"}
     },
     {
       "name": "portable",

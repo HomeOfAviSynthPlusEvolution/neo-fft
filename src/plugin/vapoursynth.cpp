@@ -70,7 +70,7 @@ void VS_CC info(const VSMap*, VSMap* out, void*, VSCore*, const VSAPI* api) {
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* api) {
   using namespace neo_fft;
   using namespace neo_fft::plugin;
-  api->configPlugin("in.7086.neo_fft", "neo_fft", "neo-fft spatial filters", VS_MAKE_VERSION(0, 1),
+  api->configPlugin("org.neofilters.neo_fft", "neo_fft", "neo-fft spatial filters", VS_MAKE_VERSION(0, 1),
                     VAPOURSYNTH_API_VERSION, 0, plugin);
   const auto f3d = signature(Algorithm::FFT3D), dft = signature(Algorithm::DFTTest);
   api->registerFunction("FFT3D", f3d.c_str(), "clip:vnode;", create<Algorithm::FFT3D>, nullptr, plugin);
