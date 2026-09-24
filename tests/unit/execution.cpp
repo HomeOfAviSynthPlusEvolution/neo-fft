@@ -8,14 +8,14 @@ int main() {try {
   span2d::Plane<float> dst_a(a.data(),192,128,192*4),dst_b(b.data(),192,128,192*4);
   for(int T:{1,3,5}) for(int block:{8,9,12,16}) for(int opt:{0,1}) {
     const int mode=block==9 ? 0 : 1;
-    DFTConfig c;c.block=block;c.overlap=block*3/4;c.mode=mode;c.tbsize=T;c.opt=opt;c.threads=1;
-    Plan serial(192,128,{32,true,false},c);c.threads=16;Plan reserved(192,128,{32,true,false},c);
+    DFTConfig c;c.block=block;c.overlap=block*3/4;c.mode=mode;c.tbsize=T;c.opt=opt;
+    Plan serial(192,128,{32,true,false},c);
     std::array<span2d::Plane<const float>,5> sources{source,source,source,source,source};
-    serial.process({sources.data(),std::size_t(T)},dst_a);reserved.process({sources.data(),std::size_t(T)},dst_b);
-    CHECK(a==b);CHECK(reserved.workspace_pool().max_capacity()==1);
-    {auto one=reserved.workspace_pool().acquire(),two=reserved.workspace_pool().acquire();
-      CHECK(reserved.workspace_pool().active_count()==2);}
-    CHECK(reserved.workspace_pool().idle_count()==1);
+    serial.process({sources.data(),std::size_t(T)},dst_a);serial.process({sources.data(),std::size_t(T)},dst_b);
+    CHECK(a==b);CHECK(serial.workspace_pool().max_capacity()==1);
+    {auto one=serial.workspace_pool().acquire(),two=serial.workspace_pool().acquire();
+      CHECK(serial.workspace_pool().active_count()==2);}
+    CHECK(serial.workspace_pool().idle_count()==1);
   }
   {
     using F=plugin::Filter<Algorithm::FFT3D>;
@@ -39,7 +39,7 @@ int main() {try {
     for(const auto& plane:pixels)CHECK(plane==a);
     CHECK(state.retention->count()==1);
   }
-  {DFTConfig c;c.block=4;c.overlap=0;c.tbsize=3;c.swin=6;c.twin=7;c.zmean=true;c.threads=3;
+  {DFTConfig c;c.block=4;c.overlap=0;c.tbsize=3;c.swin=6;c.twin=7;c.zmean=true;
     // Existing admission rejects this degenerate template before processing.
     rejects([&]{Plan p(192,128,{32,true,false},c);});
   }
@@ -52,6 +52,6 @@ int main() {try {
   }CHECK(retained->count()==0 && retained->bytes()==0);
   auto tiny=std::make_shared<runtime::Retention>(1,1);
   {runtime::WorkspacePool p(budget,1,tiny);{auto lease=p.acquire();}CHECK(p.idle_count()==0);}
-  std::cout<<"Execution: reserved threads, canonical batch reduction and shared idle bounds passed\n";
+  std::cout<<"Execution: workspace reuse, canonical batch reduction and shared idle bounds passed\n";
   return 0;
 } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}}

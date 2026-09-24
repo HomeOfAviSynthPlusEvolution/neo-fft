@@ -3,7 +3,7 @@
 #include <dualsynth/param.hpp>
 
 namespace neo_fft::plugin {
-inline ds::FilterDescriptor descriptor(Algorithm algorithm) {
+inline ds::FilterDescriptor descriptor(Algorithm algorithm, bool host_signature = false) {
   using P = ds::ParamType;
   ds::FilterDescriptor d;
   d.name = algorithm == Algorithm::FFT3D ? "FFT3D" : "DFTTest";
@@ -46,14 +46,26 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm) {
     for (auto n : {"ssystem", "dither", "dither_seed"})
       add(n);
     add("planes", P::Integer, true);
-    for (auto n : {"opt", "threads"})
-      add(n);
+    add("opt");
+  }
+  // Signature-only compatibility arguments. Keep them after all consumed
+  // arguments so neither host bridge parses them into algorithm parameters.
+  if (host_signature) {
+    if (algorithm == Algorithm::FFT3D) {
+      add("mt", P::Boolean);
+      add("ncpu");
+      add("measure", P::Boolean);
+    } else {
+      add("threads");
+      add("fft_threads");
+    }
+    add("fft_backend", P::String);
   }
   return d;
 }
 inline std::string signature(Algorithm a) {
   std::string out;
-  for (const auto& p : descriptor(a).params) {
+  for (const auto& p : descriptor(a, true).params) {
     out += p.name + ":";
     switch (p.type) {
       case ds::ParamType::Clip:
@@ -194,8 +206,6 @@ inline DFTConfig dft_config(Params p) {
   c.curves.system = p.integer("ssystem", 0);
   c.dither=p.integer("dither",0);
   c.dither_seed=p.integer("dither_seed",0);
-  // Reserved: retain the accepted domain and normalization, without scheduling workers.
-  c.threads=std::clamp(p.integer("threads",0),1,16);
   validate(c);
   return c;
 }

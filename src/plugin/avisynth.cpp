@@ -13,8 +13,8 @@ struct Adapter : Bridge<A> {
   static constexpr const char* avs_name = A == Algorithm::FFT3D ? "neo_fft_FFT3D" : "neo_fft_DFTTest";
   static constexpr bool forward_audio = true;
   static constexpr av::MtMode avs_mt_mode = av::MtMode::NiceFilter;
-  static ds::FilterDescriptor descriptor() {
-    auto d = Bridge<A>::descriptor();
+  static ds::FilterDescriptor descriptor(bool host_signature = false) {
+    auto d = plugin::descriptor(A, host_signature);
     for (auto& p : d.params) {
       p.avs_enabled = true;
       if (p.is_array)
@@ -43,6 +43,7 @@ template <Algorithm A>
 AVSValue __cdecl create(AVSValue args, void*, IScriptEnvironment* env) {
   return guarded(env, [&] {
     const auto d = Adapter<A>::descriptor();
+    // Compatibility-only trailing arguments are deliberately not accessed.
     // Match neo-mv: native arrays occupy one slot; a scalar is a one-element array.
     std::vector<AVSValue> values(d.params.size());
     for (std::size_t i = 0; i < values.size(); ++i) {
@@ -85,7 +86,7 @@ AVSValue __cdecl kernel_info(AVSValue, void*, IScriptEnvironment* env) {
 
 template <Algorithm A>
 void add(IScriptEnvironment* env) {
-  const auto signature = unwrap(ds::make_avisynth_signature(Adapter<A>::descriptor()));
+  const auto signature = unwrap(ds::make_avisynth_signature(Adapter<A>::descriptor(true)));
   env->AddFunction(Adapter<A>::avs_name, env->SaveString(signature.c_str()), create<A>, nullptr);
 }
 } // namespace neo_fft::plugin::avs

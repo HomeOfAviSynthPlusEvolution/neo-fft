@@ -3,7 +3,8 @@
 
 namespace neo_fft::plugin {
 namespace {
-// Check every supplied numeric value before feature gates, including inactive arrays.
+// Check consumed parameters, including inactive arrays. Signature-only
+// compatibility arguments are absent here and from the DS2 bridge descriptor.
 void validate_supplied(const VSMap* in, const VSAPI* api, Algorithm a) {
   for (const auto& p : descriptor(a).params) {
     const int count = api->mapNumElements(in, p.name.c_str());

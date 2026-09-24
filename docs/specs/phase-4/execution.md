@@ -8,19 +8,19 @@ Specification: RUN-004. Extends [phase-3 execution](../phase-3/execution.md). Ka
 | --- | --- |
 | FFT3D opt | Any int32 accepted, matching the pinned dispatcher; 1 selects own scalar kernels, every other value automatic Highway |
 | DFTTest opt | Only 0,1,2,3,8; 1 selects own scalar, all others automatic Highway |
-| FFT3D mt | Removed by the user-directed execution-policy revision; supplying it fails creation. All plane work runs on the calling host worker |
+| FFT3D mt, ncpu, measure | Optional host-signature compatibility arguments (bool, int, bool); values are never read or forwarded to the core. All plane work runs on the calling host worker |
 | FFT3D cache_frames | Default -1: auto `bt + host_threads - 1`; 0 disables raw-frequency caching; positive int32 is a frame limit; values below -1 fail |
 | FFT3D cache_mb | Default 128 MiB; -1 selects the same default budget; 0 disables raw-frequency caching; positive int32 is a memory limit; values below -1 fail |
-| DFTTest threads | Reserved, default 0; any int32 accepted, <=0 normalizes to 1 and positive values clamp to 16; currently has no effect on execution or workspace retention |
-| FFT3D / DFTTest fft_backend | Input parameter removed; supplying any value, including pocketfft, fails creation. PocketFFT is fixed internally; KernelInfo retains the read-only fft_backend diagnostic |
+| DFTTest threads, fft_threads | Optional host-signature integer compatibility arguments; never read, normalized or retained |
+| FFT3D / DFTTest fft_backend | Optional host-signature string/data compatibility argument; never read or validated for backend names. PocketFFT is fixed internally; KernelInfo retains the read-only fft_backend diagnostic |
 
-FFT3D ncpu and measure, and DFTTest fft_threads, have been removed by the user-directed interface cleanup. Supplying them fails creation, including historical defaults. No requested FFT-worker state is retained. KernelInfo also removes the fft_threads return field and its registered output signature; it reports backend/dispatch information without a thread-count field. DFTTest threads remains a reserved input parameter.
+The user-directed compatibility revision supersedes the earlier removal/rejection and reserved-threads parsing rules. Compatibility arguments exist only in host registration signatures; neither plugin validation nor DS2 parameter reading accesses their values. The host still enforces the registered scalar types. There is no plugin int32 bound or semantic validation for these ignored arguments. They are appended after consumed parameters, preserving the current positional prefix (including the former trailing DFTTest threads slot); use keywords when migrating older signatures. No requested execution state is retained. KernelInfo still omits fft_threads and threads output fields.
 
 opt aliases do not force a named instruction set or bypass runtime CPU capability checks. opt=1 controls own kernels, not the third-party FFT's ISA. Do not accidentally map historical opt=8 to a GPU backend.
 
 FFT3D has no internal executor, including ordinary filtering, preview, Kalman replay and rendering. Process planes in order on the calling host worker. Host frame concurrency and cache/model synchronization remain supported. This user-directed revision supersedes the historical mt parameter and plane-worker requirements in earlier phases.
 
-DFTTest has no internal executor. Block transforms/filtering execute sequentially in bounded batches on the calling host worker. The threads parameter retains its registration, default and parsing rules as a future reservation; it does not create workers or size workspace retention. Host requests may still run concurrently with private workspace leases. This user-directed revision supersedes earlier own-worker requirements, including phase 5. Do not block a host callback waiting for a workspace owned by an unrelated request that itself needs host progress.
+DFTTest has no internal executor. Block transforms/filtering execute sequentially in bounded batches on the calling host worker. The threads parameter is accepted only for call compatibility; its value is not read and cannot create workers or size workspace retention. Host requests may still run concurrently with private workspace leases. This user-directed revision supersedes earlier own-worker requirements, including phase 5. Do not block a host callback waiting for a workspace owned by an unrelated request that itself needs host progress.
 
 PocketFFT remains single-threaded internally and has no user-controlled measured planning. This revision supersedes earlier contracts for ncpu, measure and fft_threads, including the optional FFTW control mapping; it does not implement another backend. Record the effective execution settings in test manifests; no extra frame properties are added.
 

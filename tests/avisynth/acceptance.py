@@ -156,12 +156,20 @@ last""").Prefetch(4)
     ]
     for index, (expression, error) in enumerate(invalid):
         run(f"invalid-{index}", "return " + expression, error=error)
-    for function, parameter, value in (
-        ("FFT3D", "mt", "false"), ("FFT3D", "ncpu", "1"), ("FFT3D", "measure", "false"),
-        ("DFTTest", "fft_threads", "1"), ("FFT3D", "fft_backend", '"pocketfft"'),
-        ("DFTTest", "fft_backend", '"pocketfft"')):
-        run(function + "-removed-" + parameter,
-            f'return neo_fft_{function}(c,{parameter}={value})', error=parameter)
+    setup = ('c=ColorBars(width=128,height=96).ConvertToYV12().Trim(0,3)\n'
+             'c=c+c.Invert()\n')
+    for function, ignored in (
+        ("FFT3D", 'mt=true,ncpu=2147483647,measure=true,fft_backend="gpu"'),
+        ("FFT3D", 'mt=false,ncpu=-2147483647,measure=false,fft_backend="unknown"'),
+        ("DFTTest", 'threads=2147483647,fft_threads=-2147483647,fft_backend="fftw"'),
+        ("DFTTest", 'threads=-2147483647,fft_threads=2147483647,fft_backend="unknown"')):
+        body = f'''global expected=neo_fft_{function}(c,opt={opt})
+o=neo_fft_{function}(c,{ignored},opt={opt})
+return o.ScriptClip("""Assert(LumaDifference(last,expected)==0)
+Assert(ChromaUDifference(last,expected)==0 && ChromaVDifference(last,expected)==0)
+last""").Prefetch(4)
+'''
+        run(function + "-ignored-" + str(count), body, prefix=setup)
     print(f"AviSynth opt={opt}: {count} host cases passed")
 
 

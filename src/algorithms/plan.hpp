@@ -39,7 +39,6 @@ struct DFTConfig {
   bool zmean = true;
   int temporal_mode = 0, temporal_overlap = 0;
   int dither = 0, dither_seed = 0;
-  int threads = 1; // Reserved; currently all work executes on the calling thread.
   DFTCurves curves;
   std::vector<NoiseLocation> locations;
   std::optional<float> alpha;

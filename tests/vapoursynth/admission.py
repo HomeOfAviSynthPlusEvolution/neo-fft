@@ -51,7 +51,7 @@ def main():
 
     for name,temporal in [('FFT3D','bt'),('DFTTest','tbsize')]:
         call=getattr(c.neo_fft,name)
-        for kwargs in [dict(fft_backend='pocketfft'),dict(fft_backend='fftw'),dict(fft_backend='gpu'),dict(planes=[-1]),dict(planes=[1]),
+        for kwargs in [dict(planes=[-1]),dict(planes=[1]),
                        dict(sigma=float('nan')),dict(sigma=float('inf')),dict(sigma=1e100),dict(opt=1<<40),dict(sigma=-1)]:
             fails(lambda:call(src,**{temporal:1},**kwargs))
         fails(lambda:call(src,**{temporal:1},sigma='wrong'))
@@ -63,13 +63,14 @@ def main():
                    dict(ftype=5),dict(f0beta=0),dict(pmin=2,pmax=1),dict(sbsize=8,sosize=5),dict(swin=12),
                    dict(smode=0,sbsize=4),dict(dither_seed=-1),dict(alpha=0)]:
         fails(lambda:c.neo_fft.DFTTest(src,tbsize=1,planes=[],**kwargs))
-    # Removed execution controls must fail even with formerly valid/default values.
-    for name,removed in [('FFT3D',dict(ncpu=(0,1,2),measure=(False,True))),
-                         ('DFTTest',dict(fft_threads=(-1,0,1,4)))]:
+    # Legacy controls are registered but never read by the plugin/DS2 parser.
+    for name,ignored in [('FFT3D',dict(ncpu=(-(1<<40),0,1<<40),measure=(False,True),mt=(False,True))),
+                         ('DFTTest',dict(fft_threads=(-(1<<40),0,1<<40),threads=(-(1<<40),0,1<<40)))]:
         call=getattr(c.neo_fft,name)
-        for parameter,values in removed.items():
+        ignored['fft_backend']=('pocketfft','fftw','gpu',b'unknown\x00backend')
+        for parameter,values in ignored.items():
             for value in values:
-                fails(lambda:call(src,**{parameter:value}))
+                call(src,**{parameter:value}).get_frame(0)
     c.neo_fft.DFTTest(src,tbsize=1,smode=0,sbsize=3,sosize=-999,tosize=-999,threads=-1).get_frame(0)
     small=c.std.BlankClip(width=1,height=1,format=vs.GRAY8,color=[12])
     c.neo_fft.DFTTest(small,tbsize=1,smode=0,sbsize=1).get_frame(0)
