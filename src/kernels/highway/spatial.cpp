@@ -38,17 +38,33 @@ void GatherFft3d(const float* src, const float* wx_a, float wy, float* blk, int 
   }
 }
 
-void GatherDfttest(const float* src, const float* h_row, float* blk, int count) noexcept {
-  const hn::ScalableTag<float> d;
-  const auto lanes = hn::Lanes(d);
-  int x = 0;
-  for (; x + static_cast<int>(lanes) <= count; x += static_cast<int>(lanes)) {
-    const auto vsrc = hn::LoadU(d, src + x);
-    const auto vh = hn::LoadU(d, h_row + x);
-    hn::StoreU(hn::Mul(vsrc, vh), d, blk + x);
+template<int Size, class D>
+void GatherDfttestBlock(D d, const float* src, std::ptrdiff_t row_stride, std::size_t slice_stride,
+                       const float* window, float* block, int size, int temporal) noexcept {
+  const int width = Size ? Size : size;
+  const int lanes = static_cast<int>(hn::Lanes(d));
+  for (int z = 0; z < temporal; ++z) {
+    for (int y = 0; y < width; ++y) {
+      const float* row = src + std::size_t(z) * slice_stride + y * row_stride;
+      int x = 0;
+      for (; x + lanes <= width; x += lanes)
+        hn::StoreU(hn::Mul(hn::LoadU(d, row + x), hn::LoadU(d, window + x)), d, block + x);
+      for (; x < width; ++x) block[x] = row[x] * window[x];
+      block += width;
+      window += width;
+    }
   }
-  for (; x < count; ++x) {
-    blk[x] = src[x] * h_row[x];
+}
+
+void GatherDfttest(const float* src, std::ptrdiff_t row_stride, std::size_t slice_stride,
+                   const float* window, float* block, int size, int temporal) noexcept {
+  // Cap the vector width for S8, including on AVX512. Fixed sizes also eliminate
+  // repeated row-tail decisions in the common block layouts.
+  switch (size) {
+    case 8: return GatherDfttestBlock<8>(hn::CappedTag<float, 8>{}, src, row_stride, slice_stride, window, block, size, temporal);
+    case 16: return GatherDfttestBlock<16>(hn::CappedTag<float, 16>{}, src, row_stride, slice_stride, window, block, size, temporal);
+    case 32: return GatherDfttestBlock<32>(hn::CappedTag<float, 32>{}, src, row_stride, slice_stride, window, block, size, temporal);
+    default: return GatherDfttestBlock<0>(hn::ScalableTag<float>{}, src, row_stride, slice_stride, window, block, size, temporal);
   }
 }
 

@@ -15,9 +15,15 @@ void gather_fft3d_scalar(const float* src, const float* wx_a, float wy, float* b
   }
 }
 
-void gather_dfttest_scalar(const float* src, const float* h_row, float* blk, int count) noexcept {
-  for (int x = 0; x < count; ++x) {
-    blk[x] = src[x] * h_row[x];
+void gather_dfttest_scalar(const float* src, std::ptrdiff_t row_stride, std::size_t slice_stride,
+                          const float* window, float* block, int size, int temporal) noexcept {
+  for (int z = 0; z < temporal; ++z) {
+    for (int y = 0; y < size; ++y) {
+      const float* row = src + std::size_t(z) * slice_stride + y * row_stride;
+      for (int x = 0; x < size; ++x) block[x] = row[x] * window[x];
+      block += size;
+      window += size;
+    }
   }
 }
 

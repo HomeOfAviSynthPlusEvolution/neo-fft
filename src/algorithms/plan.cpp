@@ -536,6 +536,9 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
     }
   } else { // DFTTest: transforms are independent; overlap-add commits stay Y then X.
     const std::size_t spatial_samples=mul_size(std::size_t(gx.block),std::size_t(gy.block));
+    const auto padded=ws.padded();
+    const auto row_stride=padded.stride_bytes()/std::ptrdiff_t(sizeof(float));
+    const auto slice_stride=std::size_t(row_stride)*std::size_t(padded.height());
     const std::size_t bins=std::size_t(T_slots)*fft.bins();
     const int blocks=temporal_ola_ ? int(targets.size()) : 1;
     for(int time_block=0;time_block<blocks;++time_block) {
@@ -558,10 +561,8 @@ void Plan::run(span2d::Span<const span2d::Plane<const T>> sources, span2d::Plane
             for(int index=begin;index<end;++index) {
               const int ox=(first+index)*gx.step;
               float* block=ws.block(index).data();
-              for(int z=0;z<T_slots;++z) for(int y=0;y<gy.block;++y) {
-                const auto offset=std::size_t(z)*spatial_samples+std::size_t(y)*gx.block;
-                spatial_.gather_dfttest(ws.padded(z).row_ptr(oy+y)+ox,h_.data()+offset,block+offset,gx.block);
-              }
+              spatial_.gather_dfttest(padded.row_ptr(oy)+ox,row_stride,slice_stride,
+                                      h_.data(),block,gx.block,T_slots);
             }
             const auto samples=spatial_samples*std::size_t(T_slots);
             const BatchLayout real{std::size_t(gx.block),samples,active,active};

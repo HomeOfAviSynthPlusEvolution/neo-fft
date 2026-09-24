@@ -211,6 +211,26 @@ int main() {
       CHECK(spatial_target(0) != nullptr);
       CHECK(spatial_target(1) != nullptr);
 
+      // End both read buffers exactly at a guard page on Windows. In particular,
+      // S8 must use a capped vector on AVX512 rather than reading the next row.
+      for (int size : {7, 8, 9, 15, 16, 17, 32}) for (int temporal : {1, 3}) {
+        const auto samples = std::size_t(size) * size * temporal;
+        if (samples > 1024) continue;
+        const auto storage_size = (samples + 1) / 2;
+        Guarded source_storage(storage_size), window_storage(storage_size);
+        float* source = reinterpret_cast<float*>(source_storage.data) + 2 * storage_size - samples;
+        float* window = reinterpret_cast<float*>(window_storage.data) + 2 * storage_size - samples;
+        std::vector<float> result(samples);
+        for (std::size_t i = 0; i < samples; ++i) {
+          source[i] = float(int(i % 31) - 15) * 0.25f;
+          window[i] = float(i % 17) * 0.0625f;
+        }
+        for (const auto& kernel : {opt_spatial, sc_spatial}) {
+          kernel.gather_dfttest(source, size, std::size_t(size) * size, window, result.data(), size, temporal);
+          for (std::size_t i = 0; i < samples; ++i) CHECK(result[i] == source[i] * window[i]);
+        }
+      }
+
       for (int count : {1, 2, 3, 4, 7, 8, 9, 12, 15, 16, 17, 24, 31, 32, 33, 48, 64, 65, 128}) {
         // 1. gather_fft3d
         {
@@ -226,17 +246,29 @@ int main() {
           }
         }
 
-        // 2. gather_dfttest
-        {
-          std::vector<float> src(count + 4), h(count);
-          for (int i = 0; i < count + 4; ++i) src[i] = float((i * 11 + 5) % 29 - 14) / 15.0f;
-          for (int i = 0; i < count; ++i) h[i] = float((i * 13 + 7) % 19) / 19.0f;
-          std::vector<float> blk_opt(count), blk_sc(count);
-          opt_spatial.gather_dfttest(src.data() + 2, h.data(), blk_opt.data(), count);
-          sc_spatial.gather_dfttest(src.data() + 2, h.data(), blk_sc.data(), count);
-          for (int i = 0; i < count; ++i) {
-            check_near(blk_opt[i], blk_sc[i]);
+        // 2. Full DFT volumes, including temporal and row gaps, unaligned starts,
+        // SIMD tails and reversed rows. Compare directly with the source/window.
+        for (int temporal : {1, 3, 4, 15}) for (int direction : {1, -1}) {
+          const int pitch = count + 5;
+          const auto slice = std::size_t(pitch) * count + 7;
+          const auto samples = std::size_t(count) * count * temporal;
+          std::vector<float> src(slice * temporal + 4), h(samples);
+          for (std::size_t i = 0; i < src.size(); ++i) src[i] = float(int((i * 11 + 5) % 29) - 14) / 15.0f;
+          for (std::size_t i = 0; i < samples; ++i) h[i] = float((i * 13 + 7) % 19) / 19.0f;
+          constexpr float guard = -12345.0f;
+          std::vector<float> blk_opt(samples + 4, guard), blk_sc(samples + 4, guard);
+          const float* source = src.data() + 2 + (direction < 0 ? (count - 1) * pitch : 0);
+          const auto stride = std::ptrdiff_t(direction) * pitch;
+          opt_spatial.gather_dfttest(source, stride, slice, h.data(), blk_opt.data() + 2, count, temporal);
+          sc_spatial.gather_dfttest(source, stride, slice, h.data(), blk_sc.data() + 2, count, temporal);
+          for (int z = 0; z < temporal; ++z) for (int y = 0; y < count; ++y) for (int x = 0; x < count; ++x) {
+            const auto offset = (std::size_t(z) * count + y) * count + x;
+            const float expected = *(source + z * slice + y * stride + x) * h[offset];
+            CHECK(blk_opt[offset + 2] == expected);
+            CHECK(blk_sc[offset + 2] == expected);
           }
+          for (auto k : {std::size_t(0), std::size_t(1), samples + 2, samples + 3})
+            CHECK(blk_opt[k] == guard && blk_sc[k] == guard);
         }
 
         // 3. scatter_fft3d_block

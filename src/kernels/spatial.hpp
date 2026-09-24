@@ -8,7 +8,11 @@ namespace neo_fft {
 // Throws the same error as finite(), without changing any samples.
 using ValidateFiniteFn = void (*)(const float* src, std::size_t count);
 using GatherFft3dFn = void (*)(const float* src, const float* wx_a, float wy, float* blk, int count) noexcept;
-using GatherDfttestFn = void (*)(const float* src, const float* h_row, float* blk, int count) noexcept;
+// Gather one square spatial block from each temporal slice. Strides are in floats;
+// window and output contain size*size*temporal tightly packed samples. The caller
+// supplies positive dimensions and valid, non-overlapping input/output storage.
+using GatherDfttestFn = void (*)(const float* src, std::ptrdiff_t row_stride, std::size_t slice_stride,
+                                const float* window, float* block, int size, int temporal) noexcept;
 using ScatterFft3dBlockFn = void (*)(const float* inv, const float* wx_s, float* r_row, int count) noexcept;
 using ScatterFft3dRowFn = void (*)(const float* r_ptr, float wy, float* a_ptr, int count) noexcept;
 using ScatterDfttestFn = void (*)(const float* inv, const float* h_syn, float* acc_row, int count) noexcept;
