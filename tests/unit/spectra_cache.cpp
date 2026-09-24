@@ -160,6 +160,7 @@ void publication(bool fail) {
 
 template<class T> void reconstruction(SampleFormat format) {
   constexpr int w=37,h=29,count=11;
+  constexpr std::ptrdiff_t stride=w*static_cast<std::ptrdiff_t>(sizeof(T));
   std::array<std::vector<T>,count> input;
   for(int n=0;n<count;++n) {
     input[n].resize(w*h);
@@ -177,10 +178,10 @@ template<class T> void reconstruction(SampleFormat format) {
       const bool edge=n<bt/2 || count-1-n<(bt-1)/2;
       const int slots=edge ? 1 : bt;
       std::vector<span2d::Plane<const T>> sources;
-      for(int j=0;j<slots;++j)sources.emplace_back(input[n-slots/2+j].data(),w,h,w*sizeof(T));
+      for(int j=0;j<slots;++j)sources.emplace_back(input[n-slots/2+j].data(),w,h,stride);
       std::vector<T> result(w*h);
       auto registration=cache ? cache->register_request(n-slots/2,n-slots/2+slots-1,{true,false,false}) : nullptr;
-      plan.process_at<T>({sources.data(),sources.size()},{result.data(),w,h,w*sizeof(T)},n,0,{},cache,registration.get());
+      plan.process_at<T>({sources.data(),sources.size()},{result.data(),w,h,stride},n,0,{},cache,registration.get());
       return result;
     };
     std::array<std::vector<T>,count> expected;

@@ -11,6 +11,8 @@ endif()
 FetchContent_Declare(dualsynth2
   GIT_REPOSITORY https://github.com/HomeOfAviSynthPlusEvolution/dualsynth2.git
   GIT_TAG f1d51bd0217d3878f995375e95c2827b4604facf
+  PATCH_COMMAND "${CMAKE_COMMAND}" "-DNEO_FFT_DUALSYNTH_SOURCE=<SOURCE_DIR>"
+    -P "${CMAKE_CURRENT_LIST_DIR}/PatchDualSynth.cmake"
   SOURCE_SUBDIR "${_ds_subdir}")
 FetchContent_Declare(pocketfft
   GIT_REPOSITORY https://github.com/mreineck/pocketfft.git

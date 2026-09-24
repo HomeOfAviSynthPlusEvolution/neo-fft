@@ -117,7 +117,7 @@ int main() {try {
   }
   { // Cache admission uses actual capacity, including ownership/cache metadata.
     constexpr std::size_t budget=64*1024*1024;
-    auto large=[](int frame) {
+    auto large=[budget](int frame) {
       auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=frame;
       cp->planes[0].last.reserve(budget/sizeof(Z));
       return cp;

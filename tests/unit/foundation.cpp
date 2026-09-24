@@ -18,6 +18,14 @@ int main() {
     std::uint16_t a[24]{};
     auto p = checked_plane(a, 5, 3, 16, 42);
     CHECK(p.stride() == 8 && p.stride_bytes() == 16);
+    // Bottom-up planes must retain signed offsets, including unsigned indices.
+    span2d::Plane<std::uint16_t> bottom_up(a + 16, 5, 3, -16);
+    CHECK(bottom_up.row_ptr(2) == a);
+    CHECK(bottom_up.row_ptr(std::size_t{1}) == a + 8);
+    CHECK(&bottom_up(2, 3) == a + 3);
+    CHECK(&bottom_up(std::size_t{2}, std::size_t{3}) == a + 3);
+    CHECK(bottom_up.row(2).data() == a);
+    CHECK(bottom_up.subplane(1, 1, 3, 2).row_ptr(1) == a + 1);
     rejects([&] { checked_plane(a, 5, 3, 16, 41); });
     rejects([&] { checked_plane(a, 5, 3, 11, 48); });
     rejects([&] { checked_plane(a, 5, 3, 8, 48); });
