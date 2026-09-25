@@ -137,23 +137,24 @@ struct Params {
 };
 // Legacy modes enter ParamValues only through the AviSynth descriptor. An
 // explicit modern selection takes precedence, including an empty array.
-inline std::array<bool, 4> select_planes(Params params, Algorithm algorithm, int plane_count) {
-  std::array<bool, 4> selected{};
+enum class PlaneMode { Skip = 1, Copy = 2, Process = 3 };
+inline std::array<PlaneMode, 4> select_planes(Params params, Algorithm algorithm, int plane_count) {
+  std::array<PlaneMode, 4> selected;
+  selected.fill(PlaneMode::Copy);
   if (params.present("planes")) {
     const auto planes = params.integers("planes");
     if (algorithm == Algorithm::FFT3D && planes.empty())
-      for (int p = 0; p < std::min(plane_count, 3); ++p) selected[p] = true;
+      for (int p = 0; p < std::min(plane_count, 3); ++p) selected[p] = PlaneMode::Process;
     for (auto p : planes) {
       require(p >= 0 && p < plane_count, "planes index outside actual format");
-      selected[std::size_t(p)] = true;
+      selected[std::size_t(p)] = PlaneMode::Process;
     }
   } else {
     constexpr const char* names[] = {"y", "u", "v", "a"};
     for (int p = 0; p < 4; ++p) {
       const int mode = params.integer(names[p], p == 3 ? 2 : 3);
       require(mode >= 1 && mode <= 3, std::string(names[p]) + ": mode must be 1, 2 or 3");
-      // Mode 1 copies as well: never expose uninitialized output memory.
-      selected[p] = p < plane_count && mode == 3;
+      if (p < plane_count) selected[p] = static_cast<PlaneMode>(mode);
     }
   }
   return selected;

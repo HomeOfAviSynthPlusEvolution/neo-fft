@@ -18,6 +18,7 @@ struct Filter {
     ds::VideoInputInfo source;
     std::array<std::shared_ptr<const Plan>, 4> plans{};
     std::array<ROI, 4> rois{};
+    std::array<PlaneMode, 4> plane_modes{PlaneMode::Copy, PlaneMode::Copy, PlaneMode::Copy, PlaneMode::Copy};
     int temporal_size = 1;
     int temporal_mode = 0, temporal_overlap = 0;
     int pattern_frame = 0;
@@ -64,12 +65,13 @@ struct Filter {
         return config.tbsize;
     }();
     State state;
+    state.plane_modes = selected;
     state.source = info; state.temporal_size = t_size;
     state.retention=std::make_shared<runtime::Retention>(1);
     if constexpr(A==Algorithm::DFTTest) {state.temporal_mode=config.temporal_mode;state.temporal_overlap=config.temporal_overlap;}
     state.sample_bits = ds::bits_per_sample(f.sample_format);
     for (int p = 0; p < f.plane_count; ++p)
-      if (selected[p]) {
+      if (selected[p] == PlaneMode::Process) {
         try {
           const bool chroma = f.color_family == ds::ColorFamily::Yuv && (p == 1 || p == 2);
           const int w = info.width >> (chroma ? f.subsampling_w : 0), h = info.height >> (chroma ? f.subsampling_h : 0);
@@ -230,6 +232,7 @@ struct Filter {
     require(ctx.dst.format==state.source.format && ctx.dst.plane_count==state.source.format.plane_count,"output format differs");
     const auto* checkpoint=r.current ? r.current.get() : r.start.get();
     for(int p=0;p<ctx.dst.plane_count;++p) {
+      if(state.plane_modes[p]==PlaneMode::Skip) continue;
       const auto* k=checkpoint && state.plans[p] ? &checkpoint->planes[p] : nullptr;
       const auto& s=src.frame.plane(p);const auto& d=ctx.dst.plane(p);
       switch(state.source.format.sample_format) {
@@ -481,6 +484,7 @@ struct Filter {
       });
     }
     const auto process_plane = [&](int p) {
+      if(state.plane_modes[p]==PlaneMode::Skip) return;
       const auto& d = ctx.dst.plane(p);
       const bool chroma = state.source.format.color_family == ds::ColorFamily::Yuv && (p == 1 || p == 2);
       const int w = state.source.width >> (chroma ? state.source.format.subsampling_w : 0);

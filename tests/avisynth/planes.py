@@ -34,7 +34,10 @@ last""").Prefetch(4)
                         f"{call}(c,{common},planes=[0,1,2])", channels)
                 compare(tag + "-alpha", setup, f"{call}(c,{common},y=2,u=2,v=2,a=3)",
                         f"c.RemoveAlphaPlane().AddAlphaPlane({call}(c.ExtractA(),{common}))", channels)
-                compare(tag + "-copy", setup, f"{call}(c,{common},y=2,u=1,v=2,a=1)", "c", channels)
+                compare(tag + "-copy", setup, f"{call}(c,{common},y=2,u=2,v=2,a=2)", "c", channels)
+                # Never inspect unspecified output pixels from mode 1.
+                compare(tag + "-skip", setup, f"{call}(c,{common},y=3,u=1,v=2,a=1)",
+                        f"{call}(c,{common},planes=[0])", channels[0] + channels[2])
 
     setup = ('c=ColorBars(width=128,height=96).ConvertToYV12().Trim(0,3)\n'
              'c=c+c.Invert()\nc=c.AddAlphaPlane(c.ExtractY().Invert())\n')
@@ -44,6 +47,7 @@ last""").Prefetch(4)
             ("missing-modes", "y=2,a=3", "planes=[1,2,3]"),
             ("missing-alpha", "y=3", "planes=[0,1,2]"),
             ("precedence", "planes=[3],y=0,u=9,v=-1,a=2", "planes=[3]"),
+            ("skip-precedence", "planes=[3],y=1,u=1,v=1,a=1", "planes=[3]"),
             ("empty", "planes=[],y=2,u=2,v=2,a=3", "planes=[]"),
         ):
             compare(function + "-" + name, setup, f"{call}(c,{actual},opt={opt})",
@@ -74,6 +78,11 @@ last""").Prefetch(4)
                     frame=frame, reordered=tag == "kalman" and frame == 4)
     compare("fft-alpha-cache-off", setup, f"neo_fft_FFT3D(c,planes=[3],bt=5,cache_mb=0,opt={opt})",
             f"neo_fft_FFT3D(c,planes=[3],bt=5,opt={opt})")
+    for frame in (0,4,7):
+        compare("fft-kalman-skip-" + str(frame), setup,
+                f"neo_fft_FFT3D(c,bt=0,y=1,u=2,v=1,a=3,opt={opt})",
+                f"neo_fft_FFT3D(c,bt=0,planes=[3],opt={opt})", "UA", frame=frame,
+                reordered=frame==4)
     # The sample rectangle fits Alpha but exceeds the subsampled chroma bounds.
     for temporal in ("tbsize=3", "tbsize=4,tmode=1,tosize=2"):
         options = f"sbsize=8,sosize=4,{temporal},opt={opt}"
