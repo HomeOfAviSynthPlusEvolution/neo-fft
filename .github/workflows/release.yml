@@ -1,0 +1,188 @@
+name: Release builds
+run-name: Release build ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      kind: ${{ steps.source.outputs.kind }}
+      label: ${{ steps.source.outputs.label }}
+      tag: ${{ steps.source.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve source and validate tag version
+        id: source
+        run: python3 .github/scripts/release.py resolve
+
+  build:
+    needs: resolve
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            host_tests: 'OFF'
+          - platform: windows-x64
+            runner: windows-2025-vs2026
+            arch: x64
+            vs_arch: x64
+            host_tests: 'ON'
+          - platform: windows-arm64
+            runner: windows-11-vs2026-arm
+            arch: arm64
+            vs_arch: ARM64
+            host_tests: 'OFF'
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            arch: x64
+            host_tests: 'OFF'
+          - platform: macos-x64
+            runner: macos-15-intel
+            arch: x64
+            host_tests: 'OFF'
+          - platform: macos-arm64
+            runner: macos-15
+            arch: arm64
+            host_tests: 'OFF'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.arch }}
+      - name: Verify native runner architecture
+        shell: python
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          import os, platform
+          expected = {'x64': {'amd64', 'x86_64'}, 'arm64': {'arm64', 'aarch64'}}
+          assert platform.machine().lower() in expected[os.environ['EXPECTED_ARCH']]
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-13
+      - name: Install VapourSynth host
+        if: matrix.host_tests == 'ON'
+        run: >-
+          python -m pip install --only-binary=:all: --no-deps --require-hashes
+          -r source/tests/vapoursynth/requirements-ci.txt
+      - name: Configure VapourSynth Python paths
+        if: matrix.host_tests == 'ON'
+        run: vapoursynth config
+      - name: Verify VapourSynth host
+        if: matrix.host_tests == 'ON'
+        run: vspipe --version
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          cmake -S source -B build -G "Visual Studio 18 2026" -A ${{ matrix.vs_arch }} -T ClangCL
+          -DBUILD_TESTING=ON -DNEO_FFT_ENABLE_SIMD=ON -DNEO_FFT_BUILD_VAPOURSYNTH=ON -DNEO_FFT_BUILD_AVISYNTH=ON
+          -DNEO_FFT_TEST_VAPOURSYNTH=${{ matrix.host_tests }}
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DDS_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - name: Configure Linux and macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            export CC=gcc-13 CXX=g++-13
+          else
+            export CC=/usr/bin/clang CXX=/usr/bin/clang++
+          fi
+          cmake -S source -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON -DNEO_FFT_ENABLE_SIMD=ON -DNEO_FFT_BUILD_VAPOURSYNTH=ON -DNEO_FFT_BUILD_AVISYNTH=ON \
+            -DNEO_FFT_TEST_VAPOURSYNTH=OFF
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+      - name: Test specifications and SIMD equivalence
+        run: >-
+          ctest --test-dir build -C Release -L spec --verbose --output-on-failure
+          --no-tests=error --parallel 1 --output-junit tests.xml
+      - name: Package tested plugin
+        env:
+          RELEASE_COMMIT: ${{ needs.resolve.outputs.commit }}
+          RELEASE_LABEL: ${{ needs.resolve.outputs.label }}
+          RELEASE_KIND: ${{ needs.resolve.outputs.kind }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_HOST_TESTS: ${{ matrix.host_tests }}
+          RELEASE_WORKFLOW_COMMIT: ${{ github.workflow_sha }}
+        run: python source/.github/scripts/release.py package --source source --build build --output dist
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: neo-fft-${{ needs.resolve.outputs.label }}-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tests-${{ needs.resolve.outputs.label }}-${{ matrix.platform }}
+          path: |
+            build/tests.xml
+            build/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+
+  publish:
+    needs: [resolve, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - name: Verify tag still points to tested source
+        env:
+          EXPECTED_COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: neo-fft-*
+          path: dist
+          merge-multiple: true
+      - name: Verify packages and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.resolve.outputs.commit }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          archives=(dist/*.zip)
+          checksums=(dist/*.sha256)
+          test "${#archives[@]}" -eq 6
+          test "${#checksums[@]}" -eq 6
+          (cd dist && sha256sum --check *.sha256)
+          extra=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then extra+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --target "$RELEASE_COMMIT" \
+            --title "neo-fft $RELEASE_TAG" --generate-notes "${extra[@]}"

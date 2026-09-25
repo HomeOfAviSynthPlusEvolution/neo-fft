@@ -21,8 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Windows x64 / MSVC
-            os: windows-2022
+          - name: Windows x64 / VS 2026 clang-cl
+            os: windows-2025-vs2026
             arch: x64
             build_type: Release
           - name: Linux x64 / GCC
@@ -75,6 +75,9 @@ jobs:
           print(f"Runner architecture: {actual}")
           assert actual in expected[os.environ["EXPECTED_ARCH"]], "Unexpected runner architecture"
 
+      - name: Test release source validation
+        run: python .github/scripts/test_release.py
+
       - name: Install Linux build tools
         if: runner.os == 'Linux'
         run: |
@@ -99,11 +102,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: >-
-          cmake -S . -B build/ci -G "Visual Studio 17 2022" -A x64
+          cmake -S . -B build/ci -G "Visual Studio 18 2026" -A x64 -T ClangCL
           -DBUILD_TESTING=ON
           -DNEO_FFT_ENABLE_SIMD=ON
-          -DNEO_FFT_BUILD_AVISYNTH=ON
-          -DNEO_FFT_BUILD_VAPOURSYNTH=ON -DNEO_FFT_TEST_VAPOURSYNTH=ON
+          -DNEO_FFT_BUILD_VAPOURSYNTH=ON -DNEO_FFT_BUILD_AVISYNTH=ON -DNEO_FFT_TEST_VAPOURSYNTH=ON
           "-DPython3_EXECUTABLE=${{ steps.python.outputs.python-path }}"
 
       - name: Configure (Linux and macOS)
@@ -119,8 +121,8 @@ jobs:
           "-DCMAKE_CXX_FLAGS=$NEO_CXX_FLAGS"
           -DBUILD_TESTING=ON
           -DNEO_FFT_ENABLE_SIMD=ON
-          -DNEO_FFT_BUILD_AVISYNTH=${{ matrix.plugin }}
-          -DNEO_FFT_BUILD_VAPOURSYNTH=${{ matrix.plugin }} -DNEO_FFT_TEST_VAPOURSYNTH=OFF
+          -DNEO_FFT_BUILD_VAPOURSYNTH=${{ matrix.plugin }} -DNEO_FFT_BUILD_AVISYNTH=${{ matrix.plugin }}
+          -DNEO_FFT_TEST_VAPOURSYNTH=OFF
           "-DPython3_EXECUTABLE=$NEO_PYTHON"
 
       - name: Build
