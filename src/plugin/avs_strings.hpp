@@ -63,14 +63,15 @@ T parse_number_token(const char* name, std::string_view token) {
 // Creation-time adapter only: preserve the common numeric-array validation.
 template <class T>
 std::vector<T> parse_number_list(const char* name, std::string_view text) {
-  constexpr std::string_view whitespace = " \t\r\n\v\f";
+  // Upstream AVS lists allow whitespace, commas and colons, also mixed.
+  constexpr std::string_view separators = " \t\r\n\v\f,:";
   std::vector<T> values;
-  auto first = text.find_first_not_of(whitespace);
+  auto first = text.find_first_not_of(separators);
   while (first != std::string_view::npos) {
-    const auto end = text.find_first_of(whitespace, first);
+    const auto end = text.find_first_of(separators, first);
     values.push_back(parse_number_token<T>(name, text.substr(first, end == std::string_view::npos ? end : end - first)));
     if (end == std::string_view::npos) break;
-    first = text.find_first_not_of(whitespace, end);
+    first = text.find_first_not_of(separators, end);
   }
   return values;
 }

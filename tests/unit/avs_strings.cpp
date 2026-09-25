@@ -27,20 +27,31 @@ int main() {
   try {
     CHECK(parse_number_list<int>("nlocation", " \t\r\n\v\f").empty());
     CHECK(parse_number_list<double>("slocation", "").empty());
+    CHECK(parse_number_list<int>("nlocation", " ,:: \t, \r\n").empty());
+    CHECK(parse_number_list<double>("slocation", ":,,").empty());
+    for (const char* separator : {" ", ",", ":", ",: \t\r\n\v\f:,"}) {
+      const std::string sep=separator;
+      CHECK((parse_number_list<int>("nlocation", sep+"+0"+sep+"1"+sep+"2"+sep+"3"+sep) ==
+             std::vector<int>{0,1,2,3}));
+      CHECK((parse_number_list<double>("slocation", sep+"0"+sep+"+.5e-1"+sep+"1"+sep+"2.5E+1"+sep) ==
+             std::vector<double>{0,.05,1,25}));
+    }
+    // Commas delimit values; they never act as locale-specific decimal points.
+    CHECK((parse_number_list<double>("ssx", "1,5") == std::vector<double>{1,5}));
     CHECK((parse_number_list<int>("nlocation", " +1\t-2\r\n0 03 ") == std::vector<int>{1, -2, 0, 3}));
     CHECK((parse_number_list<int>("nlocation", "-2147483648 2147483647") ==
            std::vector<int>{std::numeric_limits<int>::min(), std::numeric_limits<int>::max()}));
     CHECK((parse_number_list<double>("ssx", "0 +.5 1. 2.5e+1 1E-2 -0") ==
            std::vector<double>{0, .5, 1, 25, .01, 0}));
     for (const char* text : {"1.5", "1e2", "1+2", "0x10", "2147483648", "-2147483649",
-                             "1,2", "[1 2]", "1 bad", "+", "--1", "nan", "inf"})
+                             "1;2", "1,:bad", "1e,2", "[1 2]", "1 bad", "+", "--1", "nan", "inf"})
       rejects_token<int>("nlocation", text);
-    for (const char* text : {".", "+.", "1e+", "1e-", "1+2", "0x1p2", "1e", "1e999", "1,5", "[0 1]", "0:1",
+    for (const char* text : {".", "+.", "1e+", "1e-", "1+2", "0x1p2", "1e", "1e999", "1;5", "1e+:2", "0,:junk", "[0 1]",
                              "nan", "NaN", "inf", "-infinity", "1 2junk"})
       rejects_token<double>("slocation", text);
     const auto saved = std::locale();
     std::locale::global(std::locale(saved, new CommaDecimal));
-    const auto values = parse_number_list<double>("ssy", "0 .5 1 2.25");
+    const auto values = parse_number_list<double>("ssy", "0:.5,1 2.25");
     std::locale::global(saved);
     CHECK((values == std::vector<double>{0, .5, 1, 2.25}));
     try {
@@ -91,7 +102,7 @@ int main() {
     }
     CHECK(std::setlocale(LC_NUMERIC, c_locale.c_str()) != nullptr);
     if (!tested_c_locale) std::cout << "Non-C process locale unavailable; locale-specific check skipped\n";
-    std::cout << "AVS numeric strings: strict tokens, bounds and locale passed\n";
+    std::cout << "AVS numeric strings: mixed separators, strict tokens, bounds and locale passed\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

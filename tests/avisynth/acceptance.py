@@ -72,12 +72,16 @@ return c
     # numeric arrays to the shared core, on spatially and temporally varying data.
     string_pairs = {
         "shared": ('slocation=[0,0.25,1,0.75]', 'slocation="0 +.25 1 7.5e-1"'),
+        "comma": ('slocation=[0,0.25,1,0.75]', 'slocation="0,+.25,1,7.5e-1"'),
+        "separator-axes": ('ssx=[0,0.5,1,2],ssy=[0,1,1,3],sst=[0,2,1,4]',
+                           'ssx="0:.5 1:2",ssy=",0,1:1,3:",sst="0::2,, 1:4"'),
+        "separator-sample": ('nlocation=[0,0,0,0,2,1,2,4]', 'nlocation=":+0,0:0,0 ,: 2,1:2,4,"'),
         "axes": ('ssx=[0,0.5,1,2],ssy=[0,1,1,3],sst=[0,2,1,4]',
                  'ssx="0 .5 1 2",ssy="0 1 1 3",sst="0 2 1 4"'),
         "mixed": ('ssx=[0,0.5,1,2],ssy=[0,1,1,3]', 'ssx="0 .5 1 2",ssy=[0,1,1,3]'),
         "sample": ('nlocation=[0,0,0,0,2,1,2,4]', 'nlocation="+0 0 0 0 2 1 2 4"'),
         "empty": ('nlocation=[],slocation=[],ssx=[],ssy=[],sst=[]',
-                  'nlocation="",slocation=" ",ssx="",ssy="",sst=""'),
+                  'nlocation=" ,:",slocation=" : , ",ssx="",ssy=",,",sst="::"'),
         "whitespace": ('slocation=[0,0.25,1,0.75]',
                        'slocation=" 0"+Chr(9)+".25"+Chr(13)+Chr(10)+"1 .75 "'),
     }
@@ -155,8 +159,8 @@ last""").Prefetch(4)
         ('neo_fft_DFTTest(c,slocation="0 1 1 inf")', 'slocation'),
         ('neo_fft_DFTTest(c,slocation="0 1 1 0x1p2")', 'slocation'),
         ('neo_fft_DFTTest(c,ssx="0 1 1 2junk")', 'ssx'),
-        ('neo_fft_DFTTest(c,ssy="0,1,1,2")', 'ssy'),
-        ('neo_fft_DFTTest(c,sst="0:1 1:2")', 'sst'),
+        ('neo_fft_DFTTest(c,ssy="0;1,1,2")', 'ssy'),
+        ('neo_fft_DFTTest(c,sst="0:1 1:2junk")', 'sst'),
         ('neo_fft_DFTTest(c,slocation="0 1 1 2",ssx="bad")', 'ssx'),
         ('neo_fft_DFTTest(c,planes="0")', 'integer'),
     ]
