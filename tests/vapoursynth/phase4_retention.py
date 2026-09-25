@@ -15,7 +15,7 @@ def main():
         def fill(n,f):
             out=f.copy();np.asarray(out[0])[:]=n%251;memory.append(c.used_cache_size);return out
         src=c.std.ModifyFrame(src,clips=src,selector=fill);c.std.SetVideoCache(src,mode=0)
-        out=c.neo_fft.FFT3D(src,bt=0,bw=8,bh=8,r=992,b=992,opt=1)
+        out=c.neo_fft.FFT3D(src,bt=0,bw=8,bh=8,r=992,b=992,opt=1,kalman_warmup=distance)
         frame=out.get_frame(distance);peaks.append(max(memory));del frame,out,src
     # This is the host's allocated pixel-buffer counter, not process RSS/history metadata.
     assert max(peaks)<8*1024*1024 and max(peaks)-min(peaks)<2*1024*1024,peaks

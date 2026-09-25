@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--host-api", choices=("c", "cpp"), default="c")
     parser.add_argument("--opt", type=int, choices=(0, 1), default=1)
     parser.add_argument("--planes-only", action="store_true")
+    parser.add_argument("--kalman-only", action="store_true")
     args = parser.parse_args()
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -38,6 +39,11 @@ def main():
         return result.stdout
 
     opt = args.opt
+    if args.kalman_only:
+        from kalman import check_kalman
+        check_kalman(run,opt)
+        print(f"AviSynth Kalman warmup: {count} cases passed (opt={opt})")
+        return
     if args.planes_only:
         from planes import check_planes
         check_planes(run, opt)

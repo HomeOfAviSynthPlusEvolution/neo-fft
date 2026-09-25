@@ -43,6 +43,7 @@ int select_optimal_batch_size(std::size_t block_samples, int gx_count) noexcept 
 }
 } // namespace
 void validate(const FFT3DConfig& c) {
+  require(c.kalman_warmup>=0,"FFT3D kalman_warmup must be nonnegative");
   require(c.cache_frames>=-1 && c.cache_mb>=-1,"FFT3D cache limits must be >= -1");
   require(c.left >= 0 && c.top >= 0 && c.right >= 0 && c.bottom >= 0, "ROI margins must be nonnegative");
   require(c.bw >= 2 && c.bh >= 2, "FFT3D bw/bh must be >=2");

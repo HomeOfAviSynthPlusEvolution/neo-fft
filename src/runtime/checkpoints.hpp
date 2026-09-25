@@ -34,10 +34,11 @@ public:
   using Lease=std::shared_ptr<const Checkpoint>;
   Checkpoints():budget_(64*1024*1024),retain_one_(true) {}
   explicit Checkpoints(std::size_t budget):budget_(budget),retain_one_(false) {}
-  Lease acquire(int frame) {
+  Lease acquire(int frame,int earliest=0) {
     std::lock_guard<std::mutex> lock(mutex_);
     Entry* best=nullptr;
-    for (auto& e:entries_) if(e.value && e.value->frame<=frame && (!best || e.value->frame>best->value->frame)) best=&e;
+    for (auto& e:entries_) if(e.value && e.value->frame>=earliest && e.value->frame<=frame &&
+                            (!best || e.value->frame>best->value->frame)) best=&e;
     if(!best) return {};
     touch(*best); return best->value;
   }
@@ -46,12 +47,14 @@ public:
     auto* raw=owned.release();
     Lease value(raw,std::default_delete<Checkpoint>{},ControlAllocator<Checkpoint>(&raw->control_bytes));
     const auto bytes=value->bytes();
-    // Large geometries must retain a complete state to avoid replaying from S0
-    // on every sequential request. Explicit budgets remain hard limits.
+    // Large geometries must retain a complete state to continue sequentially
+    // instead of restarting warmup on every request. Explicit budgets are hard.
     const auto required=add_size(sizeof(*this),bytes);
     const auto limit=retain_one_ && required>budget_ ? required : budget_;
     if(required>limit) return;
     std::lock_guard<std::mutex> lock(mutex_);
+    // Histories can differ after a seek: keep the first published snapshot
+    // while retained. Never replace a state already leased by another request.
     for(auto& e:entries_) if(e.value && e.value->frame==value->frame) {touch(e);return;}
     while(used_>limit-required || count()==entries_.size()) {
       Entry* oldest=nullptr;

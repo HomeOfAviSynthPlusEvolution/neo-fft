@@ -48,8 +48,7 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm, bool host_signature 
     add("planes", P::Integer, true);
     add("opt");
   }
-  // Signature-only compatibility arguments. Keep them after all consumed
-  // arguments so neither host bridge parses them into algorithm parameters.
+  // Signature-only compatibility arguments are not in the consumed descriptor.
   if (host_signature) {
     if (algorithm == Algorithm::FFT3D) {
       add("mt", P::Boolean);
@@ -61,6 +60,8 @@ inline ds::FilterDescriptor descriptor(Algorithm algorithm, bool host_signature 
     }
     add("fft_backend", P::String);
   }
+  // Append new controls after old public slots, including ignored arguments.
+  if (algorithm == Algorithm::FFT3D) add("kalman_warmup");
   return d;
 }
 inline std::string signature(Algorithm a) {
@@ -192,6 +193,7 @@ inline FFT3DConfig fft3d_config(Params p) {
   c.enhancement.ht = p.number("ht", 50.0f);
   c.cache_frames=p.integer("cache_frames",-1);
   c.cache_mb=p.integer("cache_mb",runtime::SpectraCache::default_mb);
+  c.kalman_warmup=p.integer("kalman_warmup",8);
   validate(c);
   return c;
 }

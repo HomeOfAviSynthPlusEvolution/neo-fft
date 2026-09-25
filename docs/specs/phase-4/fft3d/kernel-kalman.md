@@ -1,4 +1,4 @@
-# FFT3D canonical Kalman operator
+# FFT3D Kalman recurrence operator
 
 Specification: F3D-KALMAN-004. Applies only to effective bt=0, n>0. Windows, spatial R2C layout and normalized inverse/reconstruction follow phase 1; ROI/row mapping follows [ROI and fields](kernel-roi-fields.md).
 
@@ -13,7 +13,7 @@ L.re = L.im = 0
 C.re = C.im = Q.re = Q.im = R0
 ```
 
-This remains true for analytic/sampled noise: do not initialize C,Q with the per-bin pattern. Source frame 0 is never transformed to create S0. Output 0 is pass-through and does not advance the state. S_i for i>=1 means the state **after** consuming source frame i. All selected planes use their own R0/geometry.
+This remains true for analytic/sampled noise: do not initialize C,Q with the per-bin pattern. Source frame 0 is never transformed to create S0. Output 0 is pass-through and does not advance the state. In a full-prefix run, S_i means the state after consuming frame i. The revised [request policy](../replay.md) also uses these same initial values at a bounded cold-window start; frame index alone no longer defines a unique history. All selected planes use their own R0/geometry.
 
 ## One step
 
@@ -52,10 +52,10 @@ Preserve the shown binary32 operation order. The scalar oracle uses separate ope
 
 ## Output and state separation
 
-At the requested n copy L_n to a private output spectrum, apply inherited sharpen/dehalo (including their specified degrid handling), then normalized inverse FFT and ordinary synthesis/crop/conversion. Neither enhanced spectrum, reconstructed pixels, clipping nor quantization feeds back into L,C,Q. Replay-only intermediate frames need no enhancement, inverse FFT or output allocation. Final output and state must match a canonical sequential run with enhancement enabled only at its output stage.
+At the requested n copy L_n to a private output spectrum, apply inherited sharpen/dehalo (including their specified degrid handling), then normalized inverse FFT and ordinary synthesis/crop/conversion. Neither enhanced spectrum, reconstructed pixels, clipping nor quantization feeds back into L,C,Q. Replay-only intermediate frames need no enhancement, inverse FFT or output allocation. Final output and state must match a sequential run from the same initial state over the same consumed history, with enhancement enabled only at its output stage.
 
 Example oracle: R0=R=2, kratio=2, X1=(1,0). No motion; initial sum=4, gain=4/6, so L1.re=2/3, Q1.re=(4/6)^2*2 and C1.re=(1-4/6)*4 with binary32 rounding. With X1=(3,0), 9>8 resets both components to L1=(3,0), C1=Q1=(2,2). These distinguish zero initialization, component-wise reset and a mistaken seed from frame 0.
 
 Canonical reachable states have bit-identical C.re and C.im, and bit-identical Q.re and Q.im: S0 initializes each pair equally; a common reset assigns the same R to both; smoothing applies the same ordered binary32 operations to equal old C,Q and the same R, independently of X and L. The zero-noise identity also preserves this invariant. Thus each bin may store one binary32 C and one binary32 Q, with one shared sum/gain calculation and separate real/imaginary L updates. C and Q remain distinct values; never merge them with each other or merge different bins. This lossless representation preserves the exact logical state, including signed-zero bits. It does not represent arbitrary unequal covariance-component states; such states are outside this canonical representation and must not be silently collapsed.
 
-An implementation may vectorize independent bins/blocks/planes. It may not parallelize dependent time steps, feed enhancement back or replace early history with an arbitrary fresh state. Same-build checkpoint restore must retain exact binary32 L,C,Q values. Sharing the proven equal components is permitted; quantization, lossy compression or reconstructing state from output pixels is not. The shown operation order, active finite checks and failure rollback remain unchanged. Verify the shared representation against an independent expanded-component recurrence initialized from S0, through smoothing, either-component resets and zero-noise steps.
+An implementation may vectorize independent bins/blocks/planes. It may not parallelize dependent time steps or feed enhancement back. Bounded cold initialization follows only the defined request policy; subsequent recurrence arithmetic is unchanged. Same-build checkpoints retain exact binary32 L,C,Q values. Sharing the proven equal components is permitted; quantization, lossy compression or reconstructing state from output pixels is not. Verify the representation against an expanded-component recurrence through smoothing, either-component resets and zero-noise steps.

@@ -15,8 +15,12 @@ struct Adapter : Bridge<A> {
   static constexpr av::MtMode avs_mt_mode = av::MtMode::NiceFilter;
   static ds::FilterDescriptor descriptor(bool host_signature = false) {
     auto d = plugin::descriptor(A, host_signature);
-    for (auto name : {"y", "u", "v", "a"})
-      d.params.push_back({name, ds::ParamType::Integer, {}, false, false, false, true});
+    // Keep all old positional slots, including y/u/v/a, before new controls.
+    auto at = std::find_if(d.params.begin(),d.params.end(),[](const auto& p) {return p.name=="kalman_warmup";});
+    for (auto name : {"y", "u", "v", "a"}) {
+      at=d.params.insert(at,{name, ds::ParamType::Integer, {}, false, false, false, true});
+      ++at;
+    }
     for (auto& p : d.params) {
       p.avs_enabled = true;
       if (p.is_array)

@@ -26,6 +26,7 @@ struct Filter {
     std::shared_ptr<const DFTNoise> dft_noise;
     int sample_bits = 8;
     bool kalman = false;
+    int kalman_warmup = 8;
     std::shared_ptr<runtime::Retention> retention;
     std::shared_ptr<runtime::SpectraCache> spectra;
     std::shared_ptr<runtime::Checkpoints> checkpoints = std::make_shared<runtime::Checkpoints>();
@@ -88,6 +89,7 @@ struct Filter {
         }
       }
     if constexpr (A == Algorithm::FFT3D) {
+      state.kalman_warmup = config.kalman_warmup;
       state.pattern_frame = std::clamp(config.pframe, 0, info.num_frames-1);
       std::array<std::size_t,4> bins{};
       std::array<int,4> rows{};
@@ -159,8 +161,12 @@ struct Filter {
         else {r.spectra=register_spectra(state,n);unwrap(request(ctx));}
         return ds::Result<Stage>::success(Stage::RequestFrames);
       }
-      r.start=state.checkpoints->acquire(n);
-      r.replay_start=r.start ? r.start->frame : 0;
+      // W counts preceding source frames, excluding target n. Subtraction
+      // avoids W+1 overflow at INT_MAX. A checkpoint just before the cold
+      // window is usable: consuming from it still costs at most W+1 steps.
+      const int earliest=n>state.kalman_warmup ? n-state.kalman_warmup-1 : 0;
+      r.start=state.checkpoints->acquire(n,earliest);
+      r.replay_start=r.start ? r.start->frame : earliest;
       if(r.replay_start<n) {
         r.current=r.start ? std::make_unique<runtime::Checkpoint>(*r.start) : std::make_unique<runtime::Checkpoint>();
         if(!r.start) for(int p=0;p<state.source.format.plane_count;++p)

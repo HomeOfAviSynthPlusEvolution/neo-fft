@@ -6,6 +6,7 @@ Specification: F3D-VS-004. Extends [phase-3 interface](../../phase-3/fft3d/plugi
 | --- | --- | --- |
 | bt | int, default 3; -1..5 | 0 opens Kalman; -1/enhancement and 1..5 remain inherited |
 | kratio | binary32, default 2; >=0 | Kalman per-component motion threshold ratio; raw domain always checked |
+| kalman_warmup | int32, default 8; >=0 | Maximum historical recurrence frames excluding target n; only effective bt=0 consumes it, but raw domain is always checked. Cold requests consume at most W+1 frames; nearby checkpoints can reduce work and preserve long history. Appended after existing host arguments. |
 | l,t,r,b | int32, default 0; >=0 | Full-resolution pixel margins; [ROI rules](kernel-roi-fields.md) |
 | interlaced | bool, default false | Pack/unpack ROI rows using the specified full-height permutation |
 | opt | Existing type/default | [Execution mapping](../execution.md); historical opt aliases opened; FFT3D plane work stays on the calling host worker |

@@ -29,9 +29,34 @@ Filter::State state(FFT3DConfig config, std::size_t budget=64*1024*1024) {
   s.plans[0]=std::make_shared<Plan>(32,24,SampleFormat{32,true,false},config);
   s.rois[0]={0,0,32,24,false};s.kalman=s.plans[0]->kalman();
   s.sampled=s.plans[0]->needs_pattern_frame();s.pattern_frame=11;
+  s.kalman_warmup=config.kalman_warmup;
   s.checkpoints=std::make_shared<runtime::Checkpoints>(budget);return s;
 }
 struct Trace {std::vector<int> sources;int peak=0;};
+void fill(Pixels& pixels,int index) {
+  for(int y=0;y<24;++y) for(int x=0;x<32;++x)
+    pixels.pixels[y*32+x]=index==0 ? std::numeric_limits<float>::quiet_NaN() : float((std::int64_t(index)*7+y*3+x*11)%127)/255;
+}
+std::vector<int> indices(int first,int last) {
+  std::vector<int> result;
+  for(std::int64_t i=first;i<=last;++i) result.push_back(int(i));
+  return result;
+}
+// Independent direct Plan recurrence, with no staged request/cache selection.
+std::vector<float> oracle(Filter::State& s,int first,int last,const KalmanState* seed=nullptr) {
+  auto k=seed ? *seed : s.plans[0]->initial_kalman();
+  Pixels input,output;
+  if(s.sampled && !s.plans[0]->pattern_ready()) {
+    fill(input,s.pattern_frame);
+    s.plans[0]->prepare_pattern(span2d::Plane<const float>(input.pixels.data(),32,24,128));
+  }
+  for(std::int64_t i=first;i<=last;++i) {
+    fill(input,int(i));s.plans[0]->advance_kalman(span2d::Plane<const float>(input.pixels.data(),32,24,128),k);
+  }
+  s.plans[0]->render_kalman(span2d::Plane<const float>(input.pixels.data(),32,24,128),
+                          span2d::Plane<float>(output.pixels.data(),32,24,128),k);
+  return output.pixels;
+}
 std::vector<float> run(Filter::State& s,int n,Trace& trace,int fail_source=-1,bool fail_output=false) {
   int live=0;
   std::vector<float> output;
@@ -43,8 +68,7 @@ std::vector<float> run(Filter::State& s,int n,Trace& trace,int fail_source=-1,bo
       const auto index=request.pending()[0].frame_number;trace.sources.push_back(index);
       if(index==fail_source) throw std::runtime_error("injected delivery failure");
       auto pixels=std::make_shared<Pixels>(&live);
-      for(int y=0;y<24;++y) for(int x=0;x<32;++x)
-        pixels->pixels[y*32+x]=index==0 ? std::numeric_limits<float>::quiet_NaN() : float((std::int64_t(index)*7+y*3+x*11)%127)/255;
+      fill(*pixels,index);
       ds::FrameRef owner(pixels);request.accept({0,index,owner.view(),owner});
       trace.peak=std::max(trace.peak,live);CHECK(live==1);
     }
@@ -89,6 +113,7 @@ int main() {try {
   }
   for(bool sampled:{false,true}) {
     FFT3DConfig config;config.sigma=12;config.pfactor=sampled ? 1 : 0;config.px=2;config.py=2;
+    config.kalman_warmup=12; // This short oracle intentionally retains the full prefix.
     auto canonical=state(config,0);std::array<std::vector<float>,13> expected;
     for(int n=0;n<13;++n) {Trace trace;expected[n]=run(canonical,n,trace);CHECK(trace.peak==1);}
     auto cached=state(config);
@@ -106,12 +131,81 @@ int main() {try {
     auto exact=cached.checkpoints->acquire(12);CHECK(exact && exact->frame==12);
     Trace warm;CHECK(run(cached,12,warm)==expected[12]);CHECK(warm.sources==std::vector<int>{12});
   }
+  for(bool sampled:{false,true}) for(int warmup:{0,4,8,16}) {
+    FFT3DConfig config;config.sigma=32;config.kalman_warmup=warmup;
+    config.pfactor=sampled ? 1 : 0;config.px=config.py=2;
+    auto s=state(config);
+    Trace cold;
+    const auto first=run(s,10000,cold);
+    auto wanted=indices(10000-warmup,10000);
+    if(sampled)wanted.insert(wanted.begin(),11);
+    CHECK(cold.sources==wanted && cold.peak==1);
+    CHECK(first==oracle(s,10000-warmup,10000));
+    const auto checkpoint=s.checkpoints->acquire(10000,10000);
+    CHECK(checkpoint);
+    Trace next;const auto continued=run(s,10001,next);
+    CHECK(next.sources==std::vector<int>{10001});
+    CHECK(continued==oracle(s,10001,10001,&checkpoint->planes[0]));
+    Trace exact;CHECK(run(s,10000,exact)==first && exact.sources==std::vector<int>{10000});
+    // A future checkpoint cannot initialize an earlier request.
+    Trace backward;CHECK(run(s,9990,backward)==oracle(s,9990-warmup,9990));
+    CHECK(backward.sources==indices(9990-warmup,9990));
+    // A distant earlier checkpoint cannot cause unlimited replay.
+    Trace distant;CHECK(run(s,11000,distant)==oracle(s,11000-warmup,11000));
+    CHECK(distant.sources==indices(11000-warmup,11000));
+    // An explicit hard budget of zero always recomputes the same bounded window.
+    auto uncached=state(config,0);Trace a,b;
+    CHECK(run(uncached,10000,a)==first);CHECK(run(uncached,10000,b)==first);
+    CHECK(b.sources==indices(10000-warmup,10000));
+  }
+  { // Closest checkpoint, inclusive budget edge, and too-old rejection.
+    FFT3DConfig c;c.sigma=32;
+    auto s=state(c);Trace t;run(s,9991,t);auto edge=s.checkpoints->acquire(9991);
+    Trace at_limit;CHECK(run(s,10000,at_limit)==oracle(s,9992,10000,&edge->planes[0]));
+    CHECK(at_limit.sources==indices(9992,10000));
+    auto too_old=state(c);Trace old;run(too_old,9990,old);
+    Trace fresh;CHECK(run(too_old,10000,fresh)==oracle(too_old,9992,10000));
+    CHECK(fresh.sources==indices(9992,10000));
+    auto nearby=state(c);Trace p,q;run(nearby,9994,p);run(nearby,9996,q);
+    const auto seed=nearby.checkpoints->acquire(9996);
+    Trace four;CHECK(run(nearby,10000,four)==oracle(nearby,9997,10000,&seed->planes[0]));
+    CHECK(four.sources==indices(9997,10000));
+    // Failed work cannot replace a completed starting checkpoint.
+    Trace failure;rejects([&]{run(nearby,10004,failure,10002);});
+    CHECK(!nearby.checkpoints->acquire(10004,10004));
+    const auto before=nearby.checkpoints->acquire(10000,10000);
+    rejects([&]{run(nearby,10004,failure,-1,true);});
+    CHECK(nearby.checkpoints->acquire(10000,10000)==before);
+    CHECK(!nearby.checkpoints->acquire(10004,10004));
+    Trace retry;CHECK(run(nearby,10004,retry)==oracle(nearby,10001,10004,&before->planes[0]));
+    // Concurrent descendants of one completed checkpoint share its history,
+    // but each request owns mutable state; no canonical cold-order promise.
+    auto branch=state(c);Trace root;run(branch,10000,root);
+    const auto base=branch.checkpoints->acquire(10000,10000);
+    auto x=std::async(std::launch::async,[&]{Trace tr;auto out=run(branch,10004,tr);CHECK(tr.sources.size()<=4);return out;});
+    auto y=std::async(std::launch::async,[&]{Trace tr;auto out=run(branch,10008,tr);CHECK(tr.sources.size()<=8);return out;});
+    CHECK(x.get()==oracle(branch,10001,10004,&base->planes[0]));
+    CHECK(y.get()==oracle(branch,10001,10008,&base->planes[0]));
+  }
+  { // Cold seek near INT_MAX stays bounded; INT_MAX warmup never overflows W+1.
+    auto s=state({});Trace cold;run(s,INT32_MAX-1,cold);
+    CHECK(cold.sources==indices(INT32_MAX-9,INT32_MAX-1));
+    FFT3DConfig c;c.kalman_warmup=INT32_MAX;auto wide=state(c);Trace near_start;
+    CHECK(run(wide,2,near_start)==oracle(wide,1,2));CHECK(near_start.sources==indices(1,2));
+    auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=INT32_MAX-2;cp->planes[0]=wide.plans[0]->initial_kalman();
+    wide.checkpoints->publish(std::move(cp));Trace boundary;run(wide,INT32_MAX-1,boundary);
+    CHECK(boundary.sources==std::vector<int>{INT32_MAX-1});
+  }
   { // INT_MAX clip boundary with a synthetic immediately preceding checkpoint.
     auto s=state({});auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=INT32_MAX-2;cp->planes[0]=s.plans[0]->initial_kalman();
     s.checkpoints->publish(std::move(cp));Trace trace;run(s,INT32_MAX-1,trace);CHECK(trace.sources==std::vector<int>{INT32_MAX-1});
   }
   {runtime::Checkpoints cache;auto first=std::make_unique<runtime::Checkpoint>();first->frame=1;cache.publish(std::move(first));
     auto lease=cache.acquire(1);
+    // Competing histories at one target retain the first completed snapshot.
+    auto competing=std::make_unique<runtime::Checkpoint>();competing->frame=1;
+    competing->planes[0].last.push_back(Z(17,23));cache.publish(std::move(competing));
+    CHECK(cache.acquire(1)==lease && lease->planes[0].last.empty());
     for(int n=2;n<=6;++n){auto cp=std::make_unique<runtime::Checkpoint>();cp->frame=n;cache.publish(std::move(cp));}
     CHECK(lease->frame==1);CHECK(!cache.acquire(1));CHECK(cache.bytes()<=64*1024*1024);
   }
@@ -149,6 +243,6 @@ int main() {try {
     runtime::Checkpoints hard(64*1024*1024);hard.publish(std::move(cp));
     CHECK(hard.acquire(1) && hard.bytes()<=64*1024*1024);
   }
-  std::cout<<"Kalman scalar, canonical replay/cache/failures, exact checkpoint, source-owner bound and INT_MAX passed\n";
+  std::cout<<"Kalman scalar, bounded warmup/continuation/cache/failures, exact checkpoint, source-owner bound and INT_MAX passed\n";
   return 0;
 } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;}}

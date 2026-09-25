@@ -190,12 +190,12 @@ if(NEO_FFT_BUILD_VAPOURSYNTH OR NEO_FFT_BUILD_AVISYNTH)
       add_test(NAME vs.dft_sampling COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/dft_sampling.py" --plugin "$<TARGET_FILE:neo_fft>")
       set_tests_properties(vs.dft_sampling PROPERTIES RUN_SERIAL TRUE TIMEOUT 120 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
-      foreach(suite fft3d_models phase3_acceptance phase4_roi phase4_dither phase4_kalman phase4_retention phase4_execution phase5_temporal)
+      foreach(suite fft3d_models phase3_acceptance phase4_roi phase4_dither phase4_kalman kalman_warmup phase4_retention phase4_execution phase5_temporal)
         add_test(NAME vs.${suite} COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/${suite}.py" --plugin "$<TARGET_FILE:neo_fft>")
         set_tests_properties(vs.${suite} PROPERTIES RUN_SERIAL TRUE TIMEOUT 180 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
       endforeach()
-      foreach(suite phase4_roi phase4_dither phase4_kalman phase4_execution phase5_temporal)
+      foreach(suite phase4_roi phase4_dither phase4_kalman kalman_warmup phase4_execution phase5_temporal)
         add_test(NAME vs.${suite}.highway COMMAND "${Python3_EXECUTABLE}"
           "${CMAKE_CURRENT_SOURCE_DIR}/tests/vapoursynth/${suite}.py" --plugin "$<TARGET_FILE:neo_fft>" --opt 0)
         set_tests_properties(vs.${suite}.highway PROPERTIES RUN_SERIAL TRUE TIMEOUT 180 FAIL_REGULAR_EXPRESSION "Core freed but" LABELS "spec")
@@ -238,6 +238,13 @@ if(BUILD_TESTING AND NEO_FFT_BUILD_AVISYNTH)
           --opt ${opt} --work "${CMAKE_CURRENT_BINARY_DIR}/avisynth-planes/opt${opt}")
         set_tests_properties(avs.planes.opt${opt} PROPERTIES LABELS "spec;avisynth"
           RUN_SERIAL TRUE TIMEOUT 180)
+        add_test(NAME avs.kalman_warmup.opt${opt} COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/avisynth/acceptance.py" --kalman-only
+          --runner "$<TARGET_FILE:neo_fft_avs_runner>" --plugin "$<TARGET_FILE:neo_fft>"
+          --runtime "${NEO_FFT_AVISYNTH_RUNTIME}" --host-api "${_neo_fft_avs_host_api}"
+          --opt ${opt} --work "${CMAKE_CURRENT_BINARY_DIR}/avisynth-kalman/opt${opt}")
+        set_tests_properties(avs.kalman_warmup.opt${opt} PROPERTIES LABELS "spec;avisynth"
+          RUN_SERIAL TRUE TIMEOUT 180)
       endif()
     endforeach()
     unset(_neo_fft_avs_host_api)
@@ -278,6 +285,7 @@ if(BUILD_TESTING)
   add_executable(neo_fft_kalman_tests tests/unit/kalman.cpp)
   target_link_libraries(neo_fft_kalman_tests PRIVATE neo_fft_core DualSynth::dualsynth)
   add_test(NAME core.kalman COMMAND neo_fft_kalman_tests)
+  set_tests_properties(core.kalman PROPERTIES LABELS "spec")
   if(MINGW)
     target_link_options(neo_fft_kalman_tests PRIVATE -static -static-libgcc -static-libstdc++)
   endif()

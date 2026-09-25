@@ -9,7 +9,7 @@ Status: implementation specification, 2026-09-22; not an implementation or accep
 | [ROI and fields](fft3d/kernel-roi-fields.md) | Plane coordinates, row packing, geometry, copy boundaries |
 | [DFTTest interface](dfttest/plugin.md) | Dither controls and format activation |
 | [Dither operator](dfttest/kernel-dither.md) | Diffusion, deterministic random samples, conversion |
-| [Replay](replay.md) | Canonical state, bounded cache, staged dependencies, DS2 release contract |
+| [Replay](replay.md) | Bounded warmup, checkpoint continuation, staged dependencies, DS2 release contract |
 | [Execution](execution.md) | Worker controls, dispatch, allocations, error ownership and teardown |
 | [Acceptance](acceptance.md) | Independent oracles, reference comparisons and integration gates |
 
@@ -28,7 +28,7 @@ Algorithm source anchors are relative to the repositories in [reference sources]
 
 Explicit project decisions:
 
-- Kalman follows the reference's **sequential 0,1,...** result, including frame 0 pass-through and zero initial last spectrum. Arbitrary request order must reproduce that sequence, rather than the reference's request-history-dependent state. No hidden state reset at a seek or checkpoint eviction.
+- Revised 2026-09-24: Kalman preserves sequential recurrence and frame 0 pass-through, but cold seeks use kalman_warmup (default 8) rather than unlimited full-prefix replay. Eligible checkpoints retain long history; otherwise initialize a bounded nearby window. Cache/request order can change results. The user-approved time-cost policy in [replay](replay.md) supersedes the original canonical random-access requirement.
 - Uniform zero noise uses the finite identity rule in the operator instead of 0/0. Sampled/analytic pattern noise keeps the reference's 1e-15 floor. In Kalman, positive pfactor selects sampled noise but does not scale its power; its magnitude remains active in inherited Wiener processing. This mode-specific rule preserves the reference sequential result.
 - ROI margins are nonnegative and aligned for selected subsampled planes; mixed crop-size rounding and unsafe odd-height field packing are rejected. Interlaced processing is a full-height row permutation, **not two half-height transforms**.
 - Dither mode 1 preserves the historical diffusion equations. Modes >=2 use a specified coordinate hash and default seed 0 instead of workspace/thread-local evolving mt19937 or random_device. Only UInt8 uses dither, as in the reference.
