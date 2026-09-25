@@ -1,5 +1,7 @@
 # Phase-2 acceptance
 
+Current plane selection follows the later [shared contract](../phase-4/execution.md#avisynth-alpha-and-plane-selection-extension): omitted values select defaults; explicit `planes=[]` copies all planes in both filters. This supersedes any differing empty-list behavior described in this historical document.
+
 Specification: P2-ACCEPT-001. This is a protocol, not a passing result. Extend [P1-ACCEPT-001](../phase-1/acceptance.md), retaining pinned binary provenance, public VS invocation, deterministic fixture generation, calibration/holdout separation, error categories and per-plane metrics. Phase 2 stays open if required runs are unavailable or skipped.
 
 ## Comparison and numerical budgets

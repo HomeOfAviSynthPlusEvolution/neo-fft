@@ -57,7 +57,7 @@ struct Filter {
         require(location.x <= w-config.block && location.y <= h-config.block, "DFTTest sample rectangle outside plane");
       }
     }
-    const auto selected = select_planes(params, A, f.plane_count);
+    const auto selected = select_planes(params, f.plane_count);
     const int t_size = [&] {
       if constexpr (A == Algorithm::FFT3D)
         return std::max(1, config.bt);

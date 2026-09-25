@@ -31,6 +31,21 @@ class Protocol(unittest.TestCase):
     def compare(self):
         with contextlib.redirect_stdout(io.StringIO()): return compare(self.root,self.cases,self.budgets)
     def test_equal(self): self.assertFalse(self.compare())
+    def test_empty_planes_are_interface_exceptions_for_both_references(self):
+        for case in self.cases:
+            case['params']['planes']=[]
+            for label in ('old1','new1','old0','new0'):
+                path=self.root/case['algorithm']/label/'manifest.json'
+                value=json.loads(path.read_text());record=value['cases'][0]
+                record['case']=case
+                if label.startswith('old'):
+                    record.update(status='interface_exception',interface_exception='planes rejects empty')
+                    (path.parent/(case['id']+'.npz')).unlink()
+                path.write_text(json.dumps(value))
+        self.assertFalse(self.compare())
+        summary=json.loads((self.root/'summary.json').read_text())
+        self.assertEqual(len(summary['interface_exceptions']),6)
+        self.assertEqual(summary['comparisons'],2)
     def test_stale_output_cannot_mask_capture_error(self):
         self.change('new1',lambda v:v['cases'][0].update(status='error'))
         self.assertTrue(self.compare())

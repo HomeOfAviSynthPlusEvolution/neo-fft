@@ -1,5 +1,7 @@
 # FFT3D: phase-2 VS interface addendum
 
+Current plane selection follows the later [shared contract](../../phase-4/execution.md#avisynth-alpha-and-plane-selection-extension): omitted values select defaults; explicit `planes=[]` copies all planes in both filters. This supersedes any differing empty-list behavior described in this historical document.
+
 Specification: F3D-VS-002. Keep [F3D-VS-001](../../phase-1/fft3d/plugin.md) registration, parameter order, types, defaults and restrictions, with the following overrides:
 
 - bt defaults to 3 and now accepts every integer 1..5. Reject bt=-1,0 as deferred enhancement/Kalman modes and all values outside 1..5. T=2 and 4 are valid; no odd-length restriction applies.

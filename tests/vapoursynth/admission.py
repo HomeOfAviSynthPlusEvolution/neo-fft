@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 import numpy as np
 import vapoursynth as vs
-from fixtures import environment
+from fixtures import environment, source
 
 def fails(fn, fragment=None):
     try: fn()
@@ -34,6 +34,28 @@ def main():
     c.neo_fft.FFT3D(src).get_frame(0)
     c.neo_fft.DFTTest(src).get_frame(0)
 
+    # Explicit None is omitted by the Python bridge; [] is an all-plane copy.
+    for family in ('gray','420','rgb'):
+        for bits in (8,16,32):
+            clip,_,_=source(vs,dict(format=family,bits=bits,width=32,height=24,frames=5),17)
+            original=clip.get_frame(2)
+            for name,kwargs in [('FFT3D',dict(bw=8,bh=8,bt=3,sigma=32,degrid=0)),
+                                ('DFTTest',dict(sbsize=4,sosize=2,tbsize=3,ftype=2,sigma=.5,zmean=False))]:
+                call=getattr(c.neo_fft,name)
+                for opt in (0,1):
+                    omitted=call(clip,opt=opt,**kwargs).get_frame(2)
+                    default=call(clip,planes=None,opt=opt,**kwargs).get_frame(2)
+                    copied=call(clip,planes=[],opt=opt,**kwargs).get_frame(2)
+                    assert dict(copied.props)==dict(original.props)==dict(default.props)
+                    changed=False
+                    for plane in range(clip.format.num_planes):
+                        expected=np.asarray(omitted[plane]).tobytes()
+                        raw=np.asarray(original[plane]).tobytes()
+                        assert np.asarray(default[plane]).tobytes()==expected
+                        assert np.asarray(copied[plane]).tobytes()==raw
+                        changed |= expected!=raw
+                    assert changed, 'fixture must distinguish filtering from copying'
+
     # Invalid temporal parameters rejection
     c.neo_fft.FFT3D(src,bt=-1).get_frame(0)
     c.neo_fft.FFT3D(src,bt=0).get_frame(0)
@@ -59,6 +81,7 @@ def main():
     for kwargs in [dict(sharpen=-.1),dict(sigma2=-1),dict(l=-1),dict(kratio=-1),
                    dict(wintype=3),dict(beta=0),dict(ow=17),dict(bw=1)]:
         fails(lambda:c.neo_fft.FFT3D(src,bt=1,**kwargs))
+        fails(lambda:c.neo_fft.FFT3D(src,bt=1,planes=[],**kwargs))
     for kwargs in [dict(dither=-1),dict(nlocation=[0]),dict(ssx=[1.]),
                    dict(ftype=5),dict(f0beta=0),dict(pmin=2,pmax=1),dict(sbsize=8,sosize=5),dict(swin=12),
                    dict(smode=0,sbsize=4),dict(dither_seed=-1),dict(alpha=0)]:
@@ -97,6 +120,8 @@ def main():
         return f
     guarded_clip = c.std.ModifyFrame(src, clips=src, selector=only_frame_4)
     c.neo_fft.DFTTest(guarded_clip, tbsize=5, planes=[]).get_frame(4)
+    for bt in (0,5):
+        c.neo_fft.FFT3D(guarded_clip,bt=bt,pfactor=1,pframe=0,planes=[]).get_frame(4)
     fails(lambda: c.neo_fft.FFT3D(src, bt=5, bw=8, bh=8, sigma=1.1e18), 'finite')
 
     floatclip=c.std.BlankClip(width=128,height=96,format=vs.YUV444PS)
@@ -117,8 +142,12 @@ def main():
             fails(lambda:bad.get_frame(0),'non-finite')
             bad.get_frame(1)  # Recover using the same filter instance after a failed request.
             fails(lambda:call(unusualclip,**kwargs).get_frame(0),'non-finite')
+            fails(lambda:call(unusualclip,planes=None,**kwargs).get_frame(0),'non-finite')
+            copied=call(unusualclip,planes=[],**kwargs).get_frame(0)
             good=call(unusualclip,planes=[0],**kwargs).get_frame(0)
             original=unusualclip.get_frame(0)
+            assert dict(copied.props)==dict(original.props)
+            for p in range(3): assert np.asarray(copied[p]).tobytes()==np.asarray(original[p]).tobytes()
             assert dict(good.props)==dict(original.props)
             for p in (1,2): assert np.asarray(good[p]).tobytes()==np.asarray(original[p]).tobytes()
             # Failure in one instance must not poison a subsequent valid request.

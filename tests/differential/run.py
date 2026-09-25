@@ -65,7 +65,7 @@ def compare(root,catalog,budgets,backend_pair='pocketfft'):
                 continue
             if lr['input_sha256']!=rr['input_sha256'] or lr['case']!=rr['case']:
                 raise RuntimeError('capture inputs or case parameters differ')
-            if a=='DFTTest' and case['params'].get('planes')==[] and label!='D':
+            if case['params'].get('planes')==[] and label!='D':
                 record=lr
                 if record['status']!='interface_exception': raise RuntimeError('unverified reference interface exception')
                 exceptions.append(dict(case=cid,pair=label,reason=record['interface_exception']))

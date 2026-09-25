@@ -105,12 +105,17 @@ template<Algorithm A> void plane_admission() {
   auto copied=plugin::unwrap(F::init(ctx)).state;
   for(const auto& plan:copied.plans)CHECK(!plan);
   CHECK(!copied.dft_noise && !copied.kalman && !copied.sampled);
+  params.entries={{"planes",std::vector<int>{}},{"y",0},{"u",1},{"v",3},{"a",9}};
+  copied=plugin::unwrap(F::init(ctx)).state;
+  for(const auto& plan:copied.plans)CHECK(!plan);
+  for(const auto mode:copied.plane_modes)CHECK(mode==plugin::PlaneMode::Copy);
+  CHECK(!copied.dft_noise && !copied.kalman && !copied.sampled);
   std::vector<ds::VideoFrameRequest> requests;
   ds::VideoRequestContext request{4,requests,{},&copied};
   CHECK(F::request(request).has_value());
   CHECK(requests.size()==1 && requests[0].frame_number==4);
   input.width=128;input.height=96;
-  params.entries.push_back({"planes",std::vector<int>{3}});
+  params.entries={{"planes",std::vector<int>{3}}};
   auto alpha=plugin::unwrap(F::init(ctx)).state;
   CHECK(alpha.plans[3] && !alpha.plans[0] && !alpha.plans[1] && !alpha.plans[2]);
 }

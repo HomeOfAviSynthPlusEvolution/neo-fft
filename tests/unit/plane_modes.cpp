@@ -66,11 +66,7 @@ void check(ds::VideoFormat format,ds::ParamValues params) {
     ds::VideoInitContext ctx;ctx.inputs={&input,1};ctx.params=&mixed;
     auto actual=plugin::unwrap(F::init(ctx)).state;
     auto reference_params=mixed;
-    // With no processed planes, use legacy all-copy: FFT3D planes=[] selects all.
-    if(processed.empty()) {
-      reference_params=params;
-      for(auto name:names)reference_params.entries.push_back({name,2});
-    } else reference_params.entries.push_back({"planes",processed});
+    reference_params.entries.push_back({"planes",processed});
     ctx.params=&reference_params;
     auto reference=plugin::unwrap(F::init(ctx)).state;
     for(int n:{0,4,2,4}) {

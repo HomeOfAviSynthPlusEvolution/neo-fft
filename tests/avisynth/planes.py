@@ -32,6 +32,9 @@ last""").Prefetch(4)
                 tag = f"{function}-{family}-{bits}"
                 compare(tag + "-default", setup, f"{call}(c,{common})",
                         f"{call}(c,{common},planes=[0,1,2])", channels)
+                compare(tag + "-undefined", setup, f"{call}(c,{common},planes=Undefined())",
+                        f"{call}(c,{common})", channels)
+                compare(tag + "-empty", setup, f"{call}(c,{common},planes=[])", "c", channels)
                 compare(tag + "-alpha", setup, f"{call}(c,{common},y=2,u=2,v=2,a=3)",
                         f"c.RemoveAlphaPlane().AddAlphaPlane({call}(c.ExtractA(),{common}))", channels)
                 compare(tag + "-copy", setup, f"{call}(c,{common},y=2,u=2,v=2,a=2)", "c", channels)
@@ -48,11 +51,13 @@ last""").Prefetch(4)
             ("missing-alpha", "y=3", "planes=[0,1,2]"),
             ("precedence", "planes=[3],y=0,u=9,v=-1,a=2", "planes=[3]"),
             ("skip-precedence", "planes=[3],y=1,u=1,v=1,a=1", "planes=[3]"),
-            ("empty", "planes=[],y=2,u=2,v=2,a=3", "planes=[]"),
+            ("undefined-modes", "planes=Undefined(),y=2,u=2,v=2,a=3", "planes=[3]"),
         ):
             compare(function + "-" + name, setup, f"{call}(c,{actual},opt={opt})",
                     f"{call}(c,{expected},opt={opt})")
         compare(function + "-allcopy", setup, f"{call}(c,y=2,u=2,v=2,a=2,opt={opt})", "c")
+        compare(function + "-empty-precedence", setup,
+                f"{call}(c,planes=[],y=0,u=1,v=3,a=9,opt={opt})", "c")
         ignored = ('mt=true,ncpu=-7,measure=true,fft_backend="unused"' if function == "FFT3D"
                    else 'threads=-7,fft_threads=64,fft_backend="unused",ssx="0 2 1 8"')
         shared = "" if function == "FFT3D" else ",ssx=[0,2,1,8]"

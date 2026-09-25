@@ -1,5 +1,7 @@
 # Phase-1 acceptance through VapourSynth
 
+Current plane selection follows the later [shared contract](../phase-4/execution.md#avisynth-alpha-and-plane-selection-extension): omitted values select defaults; explicit `planes=[]` copies all planes in both filters. This supersedes any differing empty-list behavior described in this historical document.
+
 Specification: P1-ACCEPT-001. Status: acceptance protocol, not test results. Numeric budgets, binary identities and runtime reports remain to be produced during implementation. [Phase 1](README.md) stays open until every required gate below is met.
 
 ## Comparison runs

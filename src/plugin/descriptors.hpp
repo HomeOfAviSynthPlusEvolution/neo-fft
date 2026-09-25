@@ -138,13 +138,11 @@ struct Params {
 // Legacy modes enter ParamValues only through the AviSynth descriptor. An
 // explicit modern selection takes precedence, including an empty array.
 enum class PlaneMode { Skip = 1, Copy = 2, Process = 3 };
-inline std::array<PlaneMode, 4> select_planes(Params params, Algorithm algorithm, int plane_count) {
+inline std::array<PlaneMode, 4> select_planes(Params params, int plane_count) {
   std::array<PlaneMode, 4> selected;
   selected.fill(PlaneMode::Copy);
   if (params.present("planes")) {
     const auto planes = params.integers("planes");
-    if (algorithm == Algorithm::FFT3D && planes.empty())
-      for (int p = 0; p < std::min(plane_count, 3); ++p) selected[p] = PlaneMode::Process;
     for (auto p : planes) {
       require(p >= 0 && p < plane_count, "planes index outside actual format");
       selected[std::size_t(p)] = PlaneMode::Process;

@@ -89,13 +89,16 @@ def run(args):
                     record['interface_exception'] = str(e)
                 else:
                     raise AssertionError('reference empty-array registration changed; review exception')
-                if args.algorithm == 'FFT3D':
-                    del params['planes']
-                    record['reference_mapping'] = 'omitted planes selects all; reference rejects explicit empty list'
-                else:
-                    record.update(status='interface_exception',reference_mapping='no-plane copy verified against source in candidate; reference registration rejects []')
-                    manifest['cases'].append(record)
-                    continue
+                # Verify that [] caused the rejection rather than another bad
+                # argument. This is a creation probe, never an output oracle.
+                probe_params = dict(params)
+                del probe_params['planes']
+                # Retain the node so dependency provenance can still observe
+                # FFTW when a capture contains only interface-exception cases.
+                reference_probe = call(src, **probe_params)
+                record.update(status='interface_exception',reference_mapping='no-plane copy verified against source in candidate; reference registration rejects []')
+                manifest['cases'].append(record)
+                continue
             record['resolved_call'] = params
             dst = call(src,**params)
             if (dst.width,dst.height,dst.num_frames,dst.fps_num,dst.fps_den,dst.format.id) != (src.width,src.height,src.num_frames,src.fps_num,src.fps_den,src.format.id):
@@ -107,7 +110,6 @@ def run(args):
                 original = src.get_frame(n)
                 if dict(f.props) != dict(original.props): raise AssertionError('frame properties changed')
                 planes = case['params'].get('planes', list(range(dst.format.num_planes)))
-                if not planes and args.algorithm=='FFT3D': planes = list(range(dst.format.num_planes))
                 for p in range(dst.format.num_planes):
                     values = np.asarray(f[p]).copy()
                     if not np.isfinite(values).all(): raise AssertionError('non-finite output')
