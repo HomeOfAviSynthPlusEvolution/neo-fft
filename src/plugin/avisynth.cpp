@@ -1,5 +1,6 @@
 #include "plugin/filter.hpp"
 #include "plugin/avs_strings.hpp"
+#include "neo_fft_version.hpp"
 #include <avisynth.h>
 #include <dualsynth/avisynth/video_bridge.hpp>
 
@@ -116,5 +117,5 @@ NEO_FFT_AVS_EXPORT const char* __stdcall AvisynthPluginInit3(IScriptEnvironment*
     env->AddFunction("neo_fft_KernelInfo", "", neo_fft::plugin::avs::kernel_info, nullptr);
     return AVSValue();
   });
-  return "neo-fft AviSynth interface";
+  return "neo-fft " NEO_FFT_VERSION_STRING " AviSynth interface";
 }
