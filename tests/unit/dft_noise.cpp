@@ -26,7 +26,7 @@ int main() { try {
       auto axis=[&](int j){double e=0;for(int i=j%(S-overlap);i<S;i+=S-overlap)e+=std::pow(raw(i,S),2);return raw(j,S)/std::sqrt(e);};
       const auto k=(z*S+y)*S+x;
       h[k]=float(raw(z,T)*raw(y,S)*raw(x,S)/std::sqrt(double(T*S*S)));g[k]=255*h[k];
-      E2+=h[k]*h[k];E1+=std::pow(raw(z,T)*axis(y)*axis(x)/std::sqrt(double(T*S*S)),2);
+      E2+=double(h[k])*h[k];E1+=std::pow(raw(z,T)*axis(y)*axis(x)/std::sqrt(double(T*S*S)),2);
     }
     const auto G=direct_dft_3d(g.data(),T,S,S);
     std::vector<double> expected(table->size());

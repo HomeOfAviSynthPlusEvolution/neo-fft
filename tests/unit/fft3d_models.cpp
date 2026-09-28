@@ -97,7 +97,7 @@ int main() {
           std::complex<double> f{};
           for (int j = 0; j < T; ++j) f += std::complex<double>(inputs[j][k]) * std::polar(1., -2*3.141592653589793*j*m/T);
           const double q = std::norm(f)+1e-15;
-          f *= std::max((q-T*p[k])/q, double(.1f));
+          f *= std::max((q-double(T)*p[k])/q, double(.1f));
           result += f*std::polar(1., 2*3.141592653589793*(T/2)*m/T)/double(T);
         }
         check_near(output[k].real(), result.real(), 2e-5);

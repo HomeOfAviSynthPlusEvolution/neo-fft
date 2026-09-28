@@ -508,14 +508,14 @@ template<class T> void fft3d_padding(SampleFormat format) {
     const int height = tight ? block + 1 : 2 * block + 5, stride = width + 5;
     const Geometry geometry{fft3d_axis(width, block, overlap), fft3d_axis(height, block, overlap)};
     const int pitch = geometry.x.cover + 7;
-    std::vector<T> input(stride * height);
+    std::vector<T> input(std::size_t(stride) * height);
     for (std::size_t i = 0; i < input.size(); ++i) input[i] = T(i % 251);
     if constexpr (std::is_same_v<T, float>) {
       input[0] = -0.0f; input[1] = std::numeric_limits<float>::denorm_min();
       input[stride + 3] = -.3125f;
     }
     const span2d::Plane<const T> source{input.data(), width, height, stride * std::ptrdiff_t(sizeof(T))};
-    std::vector<float> expected(pitch * geometry.y.cover, -99), actual(expected);
+    std::vector<float> expected(std::size_t(pitch) * geometry.y.cover, -99), actual(expected);
     const span2d::Plane<float> old_pad{expected.data(), geometry.x.cover, geometry.y.cover, pitch * 4};
     const span2d::Plane<float> new_pad{actual.data(), geometry.x.cover, geometry.y.cover, pitch * 4};
     pad_source(source, old_pad, geometry, format, Algorithm::FFT3D);
@@ -542,7 +542,7 @@ template<class T> void dfttest_padding(SampleFormat format) {
     if(overlap==block)continue;
     const int width=block*3+1,height=block*3+3,stride=width+7;
     const Geometry geometry{dft_axis(width,block,mode,overlap),dft_axis(height,block,mode,overlap)};
-    std::vector<T> input(stride*height,T(7));
+    std::vector<T> input(std::size_t(stride)*height,T(7));
     for(int y=0;y<height;++y)for(int x=0;x<width;++x)input[y*stride+x]=T((y*71+x*19)%251);
     if constexpr(std::is_same_v<T,float>) {
       input[0]=-0.0f;input[1]=std::numeric_limits<float>::denorm_min();input[stride+3]=-.3125f;
@@ -551,7 +551,7 @@ template<class T> void dfttest_padding(SampleFormat format) {
     const span2d::Plane<const T> source{input.data()+(reverse ? stride*(height-1) : 0),width,height,
         (reverse ? -1 : 1)*stride*std::ptrdiff_t(sizeof(T))};
     const int pitch=geometry.x.cover+5;
-    std::vector<float> expected(pitch*geometry.y.cover,-99),actual(expected);
+    std::vector<float> expected(std::size_t(pitch)*geometry.y.cover,-99),actual(expected);
     const span2d::Plane<float> old_pad{expected.data(),geometry.x.cover,geometry.y.cover,pitch*4};
     const span2d::Plane<float> new_pad{actual.data(),geometry.x.cover,geometry.y.cover,pitch*4};
     pad_source(source,old_pad,geometry,format,Algorithm::DFTTest);

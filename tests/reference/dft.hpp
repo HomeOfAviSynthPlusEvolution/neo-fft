@@ -3,7 +3,7 @@
 #include <vector>
 // Independent binary64 definition. No reference filter or FFT-library calls.
 inline std::vector<std::complex<double>> direct_dft(const float* p, int h, int w, int stride) {
-  std::vector<std::complex<double>> out(h * (w / 2 + 1));
+  std::vector<std::complex<double>> out(std::size_t(h) * (w / 2 + 1));
   const double pi = std::acos(-1.0);
   for (int ky = 0; ky < h; ++ky)
     for (int kx = 0; kx <= w / 2; ++kx)
@@ -18,7 +18,7 @@ inline std::vector<std::complex<double>> direct_dft(const float* p, int h, int w
 
 inline std::vector<std::complex<double>> direct_dft_3d(const float* p, int d, int h, int w) {
   const int k = w / 2 + 1;
-  std::vector<std::complex<double>> out(d * h * k);
+  std::vector<std::complex<double>> out(std::size_t(d) * h * k);
   const double pi = std::acos(-1.0);
   for (int kz = 0; kz < d; ++kz)
     for (int ky = 0; ky < h; ++ky)

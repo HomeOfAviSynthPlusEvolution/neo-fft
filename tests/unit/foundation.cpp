@@ -197,7 +197,7 @@ int main() {
               if (b < active) {
                 for (int y = 0; y < 16; ++y) {
                   for (int x = 0; x < 16; ++x) {
-                    const auto idx = b * in_dist + y * rs + x;
+                    const auto idx = b * in_dist + std::size_t(y) * rs + x;
                     check_near(out_buf[idx], in_buf[idx], 1e-6);
                   }
                   for (int x = 16; x < rs; ++x) CHECK(out_buf[b * in_dist + y * rs + x] == -777.0f);
@@ -305,7 +305,7 @@ int main() {
               if (b < active) {
                 for (int y = 0; y < 8; ++y) {
                   for (int x = 0; x < 8; ++x) {
-                    const auto idx = b * in_dist + y * rs + x;
+                    const auto idx = b * in_dist + std::size_t(y) * rs + x;
                     check_near(out_buf[idx], in_buf[idx], 1e-5);
                   }
                 }
@@ -404,7 +404,7 @@ int main() {
               if (b < active) {
                 for (int y = 0; y < 32; ++y) {
                   for (int x = 0; x < 32; ++x) {
-                    const auto idx = b * in_dist + y * rs + x;
+                    const auto idx = b * in_dist + std::size_t(y) * rs + x;
                     check_near(out_buf[idx], in_buf[idx], 1e-5);
                   }
                 }
@@ -497,7 +497,7 @@ int main() {
 
     // Common DFT volumes: native packed axes/codelets versus a binary64 DFT.
     for(int T:{3,4,5})for(int S:{8,12,16,32}) {
-      const std::size_t samples=T*S*S,bins=T*S*(S/2+1),rd=samples+5,sd=bins+3;
+      const std::size_t samples=std::size_t(T)*S*S,bins=std::size_t(T)*S*(S/2+1),rd=samples+5,sd=bins+3;
       std::vector<float> input(rd*10,-91);
       for(int b=0;b<10;++b)for(std::size_t i=0;i<samples;++i)
         input[b*rd+i]=float(int((i*17+(b%2)*7)%23)-11)/8.f;
@@ -564,7 +564,7 @@ int main() {
             if(count<=1 || S==12 || profile==FftProfile::scalar || profile==FftProfile::sse2)CHECK(!used);
             CHECK(selected.front()==-96 && selected.back()==-96);
             for(int b=0;b<10;++b)for(std::size_t i=0;i<rd;++i) {
-              if(used && b<count && i>=center && i<center+S*S)
+              if(used && b<count && i>=center && i<center+std::size_t(S)*S)
                 check_near(selected[1+b*rd+i],input[b*rd+i],2e-6);
               else CHECK(selected[1+b*rd+i]==-96);
             }
